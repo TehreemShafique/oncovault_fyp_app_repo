@@ -23,15 +23,16 @@ class MedicalRecordModel {
   final String patientId;
   final String title;
   final RecordType type;
-  final String subtype;      // e.g. 'Imaging', 'Pathology', 'Clinical Notes'
-  final String facility;     // e.g. 'Radiology Center East'
+  final String subtype;
+  final String facility;
   final String doctorName;
   final DateTime date;
-  final String fileUrl;      // Firebase Storage URL
-  final String fileType;     // 'pdf', 'image', 'text'
-  final String summary;      // Short text summary
+  final String fileUrl;
+  final String fileType;
+  final String summary;
   final DateTime uploadedAt;
   final bool isArchived;
+  final String fileHash;       // ← NEW: SHA-256 hash for integrity verification
 
   MedicalRecordModel({
     required this.id,
@@ -47,6 +48,7 @@ class MedicalRecordModel {
     this.summary = '',
     required this.uploadedAt,
     this.isArchived = false,
+    this.fileHash = '',        // ← NEW: defaults to empty
   });
 
   Map<String, dynamic> toMap() => {
@@ -63,6 +65,7 @@ class MedicalRecordModel {
     'summary':     summary,
     'uploadedAt':  Timestamp.fromDate(uploadedAt),
     'isArchived':  isArchived,
+    'fileHash':    fileHash,   // ← NEW
   };
 
   factory MedicalRecordModel.fromMap(Map<String, dynamic> m) => MedicalRecordModel(
@@ -79,55 +82,6 @@ class MedicalRecordModel {
     summary:     m['summary'] ?? '',
     uploadedAt:  (m['uploadedAt'] as Timestamp).toDate(),
     isArchived:  m['isArchived'] ?? false,
-  );
-}
-
-class NotificationModel {
-  final String id;
-  final String patientId;
-  final String title;
-  final String body;
-  final String type;     // 'appointment', 'report', 'message', 'reminder'
-  final bool isRead;
-  final DateTime createdAt;
-  final String? referenceId; // appointmentId or recordId
-
-  NotificationModel({
-    required this.id,
-    required this.patientId,
-    required this.title,
-    required this.body,
-    required this.type,
-    this.isRead = false,
-    required this.createdAt,
-    this.referenceId,
-  });
-
-  Map<String, dynamic> toMap() => {
-    'id':          id,
-    'patientId':   patientId,
-    'title':       title,
-    'body':        body,
-    'type':        type,
-    'isRead':      isRead,
-    'createdAt':   Timestamp.fromDate(createdAt),
-    'referenceId': referenceId,
-  };
-
-  factory NotificationModel.fromMap(Map<String, dynamic> m) => NotificationModel(
-    id:          m['id'] ?? '',
-    patientId:   m['patientId'] ?? '',
-    title:       m['title'] ?? '',
-    body:        m['body'] ?? '',
-    type:        m['type'] ?? 'general',
-    isRead:      m['isRead'] ?? false,
-    createdAt:   (m['createdAt'] as Timestamp).toDate(),
-    referenceId: m['referenceId'],
-  );
-
-  NotificationModel copyWith({bool? isRead}) => NotificationModel(
-    id: id, patientId: patientId, title: title, body: body,
-    type: type, isRead: isRead ?? this.isRead, createdAt: createdAt,
-    referenceId: referenceId,
+    fileHash:    m['fileHash'] ?? '',  // ← NEW
   );
 }
