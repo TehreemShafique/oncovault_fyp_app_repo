@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "552811546534",
+    "project_id": "oncovault-8cbbc",
+    "storage_bucket": "oncovault-8cbbc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:552811546534:android:e8d905cc086084cc33b167",
+        "android_client_info": {
+          "package_name": "com.example.fyp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDhhatW0IlF7IxLYr68u4gq64YiIwDyfAY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:552811546534:android:4ada1777766757da33b167",
+        "android_client_info": {
+          "package_name": "com.example.oncovault"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDhhatW0IlF7IxLYr68u4gq64YiIwDyfAY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
