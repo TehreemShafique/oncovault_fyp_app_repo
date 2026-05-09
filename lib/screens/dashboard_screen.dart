@@ -7,8 +7,7 @@ import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'patient/patient_dashboard.dart';
 import 'profile_selection_screen.dart';
-import 'patient/ehr_dashboard.dart';
-
+import '../features/ehr/presentation/pages/ehr_dashboard.dart';
 class DashboardScreen extends StatelessWidget {
   final OVUser? user;
   const DashboardScreen({super.key, this.user});

@@ -8,7 +8,7 @@ import 'dart:io';
 
 import '../../../../models/medical_record_model.dart';
 import '../../../../models/patient_profile_model.dart';
-import '../../../../features/ehr/data/repositories/ehr_repository.dart';
+import '../../../../features/ehr/data/repositories/ehr_repository_impl.dart';
 import '../../../../theme/app_theme.dart';
 import '../widgets/integrity_status_badge.dart';
 import '../widgets/voice_input_placeholder.dart';
@@ -28,7 +28,7 @@ class EhrDashboard extends StatefulWidget {
 }
 
 class _EhrDashboardState extends State<EhrDashboard> {
-  final EhrRepository _repo = EhrRepository.instance;
+  final EhrRepositoryImpl _repo = EhrRepositoryImpl.instance;
 
   PatientProfile?          _profile;
   List<MedicalRecordModel> _records  = [];
@@ -46,13 +46,20 @@ class _EhrDashboardState extends State<EhrDashboard> {
   Future<void> _loadAll() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final results = await Future.wait([
-        _repo.fetchPatientProfile(widget.patientId),
-        _repo.fetchRecords(widget.patientId),
-      ]);
+      // final results = await Future.wait([
+      //   _repo.fetchPatientProfile(widget.patientId),
+      //   _repo.fetchRecords(widget.patientId),
+      // ]);
+      // setState(() {
+      //   _profile = results[0] as PatientProfile?;
+      //   _records = results[1] as List<MedicalRecordModel>;
+      //   _loading = false;
+      // });
+      final profile = await _repo.fetchPatientProfile(widget.patientId);
+      final records = await _repo.fetchRecords(widget.patientId);
       setState(() {
-        _profile = results[0] as PatientProfile?;
-        _records = results[1] as List<MedicalRecordModel>;
+        _profile = profile;
+        _records = records;
         _loading = false;
       });
     } catch (e) {
