@@ -2,12 +2,14 @@
 // Post-login router — routes to the correct module based on role.
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Needed for FirebaseAuth
 import '../theme/app_theme.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'patient/patient_dashboard.dart';
 import 'doctor/doctor_dashboard.dart';
 import 'profile_selection_screen.dart';
+import 'patient/ehr_dashboard.dart';
 
 class DashboardScreen extends StatelessWidget {
   final OVUser? user;
@@ -19,7 +21,7 @@ class DashboardScreen extends StatelessWidget {
       switch (user!.role) {
         case 'patient':
           return PatientDashboard(
-            patientId:   user!.uid,
+            patientId: user!.uid,
             patientName: user!.name,
           );
         case 'doctor':
@@ -104,7 +106,91 @@ class _ComingSoon extends StatelessWidget {
                       Text(user!.medicalId, style: GoogleFonts.inter(
                           fontSize: 13, color: OV.primary, fontWeight: FontWeight.w600)),
                     ])),
-              ],
-            ])))),
-      ])));
+
+            Expanded(
+                child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                                color: OV.primaryContainer,
+                                borderRadius: BorderRadius.circular(24)),
+                            child: Icon(Icons.construction_rounded,
+                                size: 40, color: OV.primary)),
+                        const SizedBox(height: 20),
+                        Text('$role Dashboard',
+                            style: GoogleFonts.manrope(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                color: OV.onSurface)),
+                        const SizedBox(height: 8),
+                        Text(
+                            'The $role module is coming soon. It will be implemented in the next phase.',
+                            style: GoogleFonts.inter(
+                                fontSize: 14, color: OV.onSurfaceVariant, height: 1.6),
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 24),
+
+                        // User Info Card
+                        if (user != null) ...[
+                          Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                      color: OV.outlineVariant.withOpacity(0.5))),
+                              child: Column(children: [
+                                Text('Signed in as',
+                                    style: GoogleFonts.inter(
+                                        fontSize: 12, color: OV.onSurfaceVariant)),
+                                const SizedBox(height: 4),
+                                Text(user!.name,
+                                    style: GoogleFonts.manrope(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                        color: OV.onSurface)),
+                                const SizedBox(height: 4),
+                                Text(user!.medicalId,
+                                    style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        color: OV.primary,
+                                        fontWeight: FontWeight.w600)),
+                              ])),
+
+                          const SizedBox(height: 24),
+
+                          // CORRECTED NAVIGATION BUTTON
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => EhrDashboard(
+                                      patientId: user!.uid,
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.folder_shared_rounded),
+                              label: const Text('Access EHR Vault'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: OV.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                elevation: 0,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ]),
+                    ))),
+          ])));
 }
