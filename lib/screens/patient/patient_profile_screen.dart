@@ -213,37 +213,122 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 3))]);
 
   void _showEditDialog(BuildContext context, PatientProfile p) {
-    final phoneCtrl = TextEditingController(text: p.phone);
+    final phoneCtrl   = TextEditingController(text: p.phone);
     final addressCtrl = TextEditingController(text: p.address);
+    final allergyCtrl = TextEditingController(text: p.allergies.join(', '));
+    String selectedGender   = p.gender;
+    String selectedBlood    = p.bloodType;
+    DateTime? selectedDOB   = p.dateOfBirth;
+
+    final genders    = ['Male', 'Female', 'Other', 'Prefer not to say'];
+    final bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
     showModalBottomSheet(
-      context: context, isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => Padding(
-          padding: EdgeInsets.fromLTRB(24, 24, 24, MediaQuery.of(context).viewInsets.bottom + 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Edit Personal Info', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 20),
-            _EditField(ctrl: phoneCtrl, label: 'Phone Number', icon: Icons.phone_outlined),
-            const SizedBox(height: 12),
-            _EditField(ctrl: addressCtrl, label: 'Address', icon: Icons.location_on_outlined),
-            const SizedBox(height: 24),
-            SizedBox(width: double.infinity, height: 50,
-                child: ElevatedButton(
-                    onPressed: () async {
-                      await FirebaseFirestore.instance.collection('patients').doc(p.uid).set({
-                        ...p.toMap(), 'phone': phoneCtrl.text.trim(), 'address': addressCtrl.text.trim(),
-                      });
-                      await FirebaseFirestore.instance.collection('users').doc(p.uid).update({
-                        'phone': phoneCtrl.text.trim(), 'address': addressCtrl.text.trim(),
-                      });
-                      if (context.mounted) { Navigator.pop(context); _load(); }
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: OV.slateDark, foregroundColor: Colors.white,
-                        elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-                    child: Text('Save Changes', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600)))),
-          ])),
-    );
+        context: context, isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) => DraggableScrollableSheet(
+            initialChildSize: 0.85, maxChildSize: 0.95, minChildSize: 0.5, expand: false,
+            builder: (_, sc) => SingleChildScrollView(controller: sc, child: Padding(
+                padding: EdgeInsets.fromLTRB(24, 24, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Center(child: Container(width: 40, height: 4,
+                      decoration: BoxDecoration(color: OV.outlineVariant, borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 16),
+                  Text('Edit Profile', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 20),
+
+                  _SectionLabel('Personal Information'),
+                  const SizedBox(height: 10),
+                  _EditField(ctrl: phoneCtrl, label: 'Phone Number', icon: Icons.phone_outlined),
+                  const SizedBox(height: 10),
+                  _EditField(ctrl: addressCtrl, label: 'Residential Address', icon: Icons.location_on_outlined),
+                  const SizedBox(height: 10),
+
+                  Text('Gender', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.outline)),
+                  const SizedBox(height: 6),
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: OV.surfaceLow, borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: OV.outlineVariant.withOpacity(0.6))),
+                      child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+                          value: selectedGender.isNotEmpty ? selectedGender : null,
+                          hint: Text('Select gender', style: GoogleFonts.inter(fontSize: 14, color: OV.outline)),
+                          isExpanded: true,
+                          style: GoogleFonts.inter(fontSize: 14, color: OV.onSurface),
+                          items: genders.map((g) => DropdownMenuItem(value: g,
+                              child: Text(g, style: GoogleFonts.inter(fontSize: 14, color: OV.onSurface)))).toList(),
+                          onChanged: (v) => setModal(() => selectedGender = v ?? '')))),
+                  const SizedBox(height: 10),
+
+                  Text('Date of Birth', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.outline)),
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                      onTap: () async {
+                        final picked = await showDatePicker(context: ctx,
+                            initialDate: selectedDOB ?? DateTime(1990),
+                            firstDate: DateTime(1920), lastDate: DateTime.now(),
+                            builder: (c, child) => Theme(data: Theme.of(c).copyWith(
+                                colorScheme: const ColorScheme.light(primary: OV.primary)), child: child!));
+                        if (picked != null) setModal(() => selectedDOB = picked);
+                      },
+                      child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                          decoration: BoxDecoration(color: OV.surfaceLow, borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: OV.outlineVariant.withOpacity(0.6))),
+                          child: Row(children: [
+                            Icon(Icons.cake_outlined, color: OV.outline, size: 18),
+                            const SizedBox(width: 10),
+                            Text(selectedDOB != null
+                                ? '\${selectedDOB!.day}/\${selectedDOB!.month}/\${selectedDOB!.year}'
+                                : 'Select date of birth',
+                                style: GoogleFonts.inter(fontSize: 14,
+                                    color: selectedDOB != null ? OV.onSurface : OV.outline)),
+                          ]))),
+
+                  const SizedBox(height: 20),
+                  _SectionLabel('Medical Information'),
+                  const SizedBox(height: 10),
+
+                  Text('Blood Type', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.outline)),
+                  const SizedBox(height: 6),
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: OV.surfaceLow, borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: OV.outlineVariant.withOpacity(0.6))),
+                      child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+                          value: selectedBlood.isNotEmpty ? selectedBlood : null,
+                          hint: Text('Select blood type', style: GoogleFonts.inter(fontSize: 14, color: OV.outline)),
+                          isExpanded: true,
+                          style: GoogleFonts.inter(fontSize: 14, color: OV.onSurface),
+                          items: bloodTypes.map((bt) => DropdownMenuItem(value: bt,
+                              child: Text(bt, style: GoogleFonts.inter(fontSize: 14, color: OV.onSurface)))).toList(),
+                          onChanged: (v) => setModal(() => selectedBlood = v ?? '')))),
+                  const SizedBox(height: 10),
+
+                  _EditField(ctrl: allergyCtrl, label: 'Allergies (comma separated)', icon: Icons.warning_amber_rounded),
+                  const SizedBox(height: 4),
+                  Text('e.g. Penicillin, Shellfish, Latex',
+                      style: GoogleFonts.inter(fontSize: 11, color: OV.outline, fontStyle: FontStyle.italic)),
+
+                  const SizedBox(height: 24),
+                  SizedBox(width: double.infinity, height: 50,
+                      child: ElevatedButton(
+                          onPressed: () async {
+                            final allergiesList = allergyCtrl.text.trim().isEmpty
+                                ? <String>[]
+                                : allergyCtrl.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+                            final updated = p.copyWith(
+                              phone: phoneCtrl.text.trim(), address: addressCtrl.text.trim(),
+                              gender: selectedGender, dateOfBirth: selectedDOB,
+                              bloodType: selectedBlood, allergies: allergiesList,
+                            );
+                            await FirebaseFirestore.instance.collection('patients').doc(p.uid).set(updated.toMap());
+                            await FirebaseFirestore.instance.collection('users').doc(p.uid)
+                                .update({'phone': phoneCtrl.text.trim(), 'address': addressCtrl.text.trim()});
+                            if (ctx.mounted) { Navigator.pop(ctx); _load(); }
+                          },
+                          style: ElevatedButton.styleFrom(backgroundColor: OV.slateDark, foregroundColor: Colors.white,
+                              elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                          child: Text('Save Changes', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600)))),
+                ]))))));
   }
 }
 
@@ -302,6 +387,22 @@ class _MedicalInfoCard extends StatelessWidget {
         Text(value, style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
       ]),
     ]),
+  );
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: GoogleFonts.manrope(
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+      color: OV.onSurface,
+    ),
   );
 }
 
