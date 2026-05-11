@@ -113,18 +113,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen>
                           onTap: () { setState(() => _selectedIndex = i); HapticFeedback.lightImpact(); })));
             }),
 
-            const SizedBox(height: 8),
-            // Already have account link
-            GestureDetector(
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen())),
-                child: Padding(padding: const EdgeInsets.only(bottom: 24),
-                    child: RichText(textAlign: TextAlign.center, text: TextSpan(
-                        style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
-                        children: [
-                          const TextSpan(text: 'Already have an account? '),
-                          TextSpan(text: 'Sign In', style: GoogleFonts.inter(
-                              fontSize: 13, fontWeight: FontWeight.w700, color: OV.primary)),
-                        ])))),
+
           ]),
         )),
 

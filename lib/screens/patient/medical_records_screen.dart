@@ -84,10 +84,10 @@ class _MedicalRecordsScreenState extends State<MedicalRecordsScreen>
         Expanded(child: TabBarView(controller: _tab, children: [
           // Medical History Tab
           _RecordsTab(
-              patientId: widget.patientId, service: _service,
-              type: RecordType.medicalHistory, filter: _activeFilter,
-              onRecordTap: (r) => Navigator.push(context, _slide(DiagnosisHistoryScreen(patientId: widget.patientId))),
-              extraBottom: _buildStorageCard()),
+            patientId: widget.patientId, service: _service,
+            type: RecordType.medicalHistory, filter: _activeFilter,
+            onRecordTap: (r) => Navigator.push(context, _slide(DiagnosisHistoryScreen(patientId: widget.patientId))),
+          ),
 
           // Reports Tab
           _RecordsTab(
@@ -115,37 +115,7 @@ class _MedicalRecordsScreenState extends State<MedicalRecordsScreen>
             letterSpacing: 1, color: OV.outline)),
       ]));
 
-  Widget _buildStorageCard() => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Container(padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(color: OV.slateDark, borderRadius: BorderRadius.circular(20)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Storage Secure', style: GoogleFonts.manrope(
-                fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
-            const SizedBox(height: 8),
-            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('82%', style: GoogleFonts.manrope(
-                  fontSize: 36, fontWeight: FontWeight.w800, color: Colors.white)),
-              const SizedBox(width: 10),
-              Padding(padding: const EdgeInsets.only(bottom: 6),
-                  child: Text('END-TO-END\nENCRYPTED', style: GoogleFonts.inter(
-                      fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white60, letterSpacing: 0.5))),
-            ]),
-            const SizedBox(height: 12),
-            ClipRRect(borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(value: 0.82, minHeight: 6,
-                    backgroundColor: Colors.white24,
-                    valueColor: const AlwaysStoppedAnimation(Colors.white))),
-            const SizedBox(height: 16),
-            SizedBox(width: double.infinity, height: 44,
-                child: OutlinedButton(
-                    onPressed: () {},
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white38),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    child: Text('Request Archive Access',
-                        style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white)))),
-          ])));
+
 
   Widget _buildFiltersCard() => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),

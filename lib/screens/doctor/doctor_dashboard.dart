@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
+import '../../services/auth_service.dart';
+import '../profile_selection_screen.dart';
 import '../../models/appointment_model.dart';
 import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
@@ -14,6 +16,7 @@ import 'patient_list_screen.dart';
 import 'critical_alerts_screen.dart';
 import 'doctor_notifications_screen.dart';
 import 'doctor_profile_screen.dart';
+import 'prescription_screen.dart';
 
 class DoctorDashboard extends StatefulWidget {
   final String doctorId;
@@ -98,6 +101,35 @@ class _DashboardHome extends StatelessWidget {
                               decoration: const BoxDecoration(color: OV.error, shape: BoxShape.circle))),
                         ]));
                   }),
+              const SizedBox(width: 8),
+              // Logout button
+              GestureDetector(
+                  onTap: () async {
+                    final ctx = context;
+                    final confirm = await showDialog<bool>(context: ctx,
+                        builder: (_) => AlertDialog(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            title: Text('Sign Out', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700)),
+                            content: Text('Are you sure you want to sign out?',
+                                style: GoogleFonts.inter(fontSize: 14, color: OV.onSurfaceVariant)),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false),
+                                  child: Text('Cancel', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: OV.onSurfaceVariant))),
+                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
+                                  style: ElevatedButton.styleFrom(backgroundColor: OV.error, elevation: 0,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                                  child: Text('Sign Out', style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: Colors.white))),
+                            ]));
+                    if (confirm == true && ctx.mounted) {
+                      await AuthService().signOut();
+                      if (ctx.mounted) Navigator.pushAndRemoveUntil(ctx,
+                          MaterialPageRoute(builder: (_) => const ProfileSelectionScreen()), (r) => false);
+                    }
+                  },
+                  child: Container(padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
+                      child: Icon(Icons.logout_rounded, size: 16, color: OV.error))),
               const SizedBox(width: 8),
               GestureDetector(
                   onTap: () => Navigator.push(context, dSlide(DoctorProfileScreen(doctorId: doctorId))),
@@ -209,25 +241,37 @@ class _DashboardHome extends StatelessWidget {
                             onTap: () {})).toList());
                   })))),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 20)),
+      const SliverToBoxAdapter(child: SizedBox(height: 16)),
 
-      // ── Quick Actions ─────────────────────────────────────────
+      // ── Issue Prescription quick button ───────────────────────
       SliverToBoxAdapter(child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(children: [
-            _QuickAction(icon: Icons.edit_note_rounded, label: 'Clinical\nNotes',
-                bg: OV.primaryContainer, iconColor: OV.primary, onTap: () {}),
-            const SizedBox(width: 12),
-            _QuickAction(icon: Icons.science_outlined, label: 'Labs',
-                bg: OV.tertiaryContainer, iconColor: OV.tertiary, onTap: () {}),
-            const SizedBox(width: 12),
-            _QuickAction(icon: Icons.image_search_rounded, label: 'Imaging',
-                bg: OV.secondaryContainer, iconColor: OV.secondary, onTap: () {}),
-          ]))),
+          child: GestureDetector(
+              onTap: () => Navigator.push(context, dSlide(PrescriptionScreen(
+                  doctorId: doctorId, doctorName: doctorName, doctorSpecialty: ''))),
+              child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: OV.primaryContainer.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: OV.primary.withOpacity(0.25))),
+                  child: Row(children: [
+                    Container(width: 44, height: 44,
+                        decoration: BoxDecoration(color: OV.primary, borderRadius: BorderRadius.circular(12)),
+                        child: const Icon(Icons.medication_rounded, color: Colors.white, size: 22)),
+                    const SizedBox(width: 14),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Issue Digital Prescription', style: GoogleFonts.manrope(
+                          fontSize: 14, fontWeight: FontWeight.w700, color: OV.primary)),
+                      Text('Generate and send prescriptions to patients',
+                          style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+                    ])),
+                    Icon(Icons.arrow_forward_ios_rounded, size: 14, color: OV.primary),
+                  ]))))),
 
       const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
-      // ── Daily Schedule ────────────────────────────────────────
+      // ── Daily Schedule (Real Firestore data) ──────────────────
       SliverToBoxAdapter(child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -237,35 +281,54 @@ class _DashboardHome extends StatelessWidget {
               Text(DateFormat('EEEE, MMM d').format(DateTime.now()),
                   style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
             ]),
-            Container(padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: OV.surfaceLow, borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-                child: Icon(Icons.calendar_month_rounded, size: 16, color: OV.primary)),
+            GestureDetector(
+                onTap: () => Navigator.push(context, dSlide(
+                    AppointmentRequestsScreen(doctorId: doctorId, doctorName: doctorName))),
+                child: Container(padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: OV.surfaceLow, borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
+                    child: Icon(Icons.calendar_month_rounded, size: 16, color: OV.primary))),
           ]))),
       const SliverToBoxAdapter(child: SizedBox(height: 12)),
-      SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Column(children: service.getTodaySchedule(doctorId)
-              .map((s) => _ScheduleItem(entry: s))
-              .toList()))),
+      SliverToBoxAdapter(child: StreamBuilder<List<AppointmentModel>>(
+          stream: service.watchDoctorAppointments(doctorId),
+          builder: (_, snap) {
+            final now = DateTime.now();
+            final todayAppts = (snap.data ?? []).where((a) {
+              final d = a.appointmentDate;
+              return d.year == now.year && d.month == now.month && d.day == now.day
+                  && a.status != AppointmentStatus.cancelled
+                  && a.status != AppointmentStatus.rejected;
+            }).toList()
+              ..sort((a, b) => a.appointmentDate.compareTo(b.appointmentDate));
 
-      const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Padding(padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Center(child: SizedBox(height: 40, width: 40,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: OV.primary))));
+            }
 
-      // ── Schedule Appointment FAB area ─────────────────────────
-      SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: SizedBox(width: double.infinity, height: 52,
-              child: ElevatedButton.icon(
-                  onPressed: () => Navigator.push(context, dSlide(
-                      AppointmentRequestsScreen(doctorId: doctorId, doctorName: doctorName))),
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: Text('Schedule Appointment', style: GoogleFonts.manrope(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: OV.slateDark, foregroundColor: Colors.white,
-                      elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))))))),
+            if (todayAppts.isEmpty) {
+              return Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Container(padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 3))]),
+                      child: Row(children: [
+                        Icon(Icons.event_available_rounded, color: OV.outlineVariant, size: 28),
+                        const SizedBox(width: 14),
+                        Text('No appointments scheduled for today',
+                            style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant)),
+                      ])));
+            }
+
+            return Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(children: todayAppts.map((a) =>
+                    _AppointmentScheduleItem(appt: a)).toList()));
+          })),
+
 
       const SliverToBoxAdapter(child: SizedBox(height: 24)),
+
     ]));
   }
 }
@@ -326,38 +389,17 @@ class _RecentPatientRow extends StatelessWidget {
 }
 
 // ── Quick Action Tile ─────────────────────────────────────────────────────────
-class _QuickAction extends StatelessWidget {
-  final IconData icon; final String label;
-  final Color bg, iconColor; final VoidCallback onTap;
-  const _QuickAction({required this.icon, required this.label,
-    required this.bg, required this.iconColor, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => Expanded(child: GestureDetector(
-      onTap: onTap,
-      child: DCard(
-          padding: const EdgeInsets.symmetric(vertical: 18),
-          child: Column(children: [
-            Container(width: 48, height: 48,
-                decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
-                child: Icon(icon, color: iconColor, size: 24)),
-            const SizedBox(height: 8),
-            Text(label, style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600,
-                color: OV.onSurface), textAlign: TextAlign.center),
-          ]))));
-}
-
-// ── Schedule Item ─────────────────────────────────────────────────────────────
-class _ScheduleItem extends StatelessWidget {
-  final ScheduleEntry entry;
-  const _ScheduleItem({required this.entry});
+// ── Appointment Schedule Item (real Firestore data) ──────────────────────────
+class _AppointmentScheduleItem extends StatelessWidget {
+  final AppointmentModel appt;
+  const _AppointmentScheduleItem({required this.appt});
 
   Color get _lineColor {
-    switch (entry.type) {
-      case 'consultation':  return OV.primary;
-      case 'board_meeting': return OV.secondary;
-      case 'review':        return OV.tertiary;
-      default:              return OV.outline;
+    switch (appt.status) {
+      case AppointmentStatus.approved:    return OV.tertiary;
+      case AppointmentStatus.pending:     return const Color(0xFF8B5000);
+      case AppointmentStatus.rescheduled: return OV.primary;
+      default:                            return OV.outline;
     }
   }
 
@@ -365,23 +407,18 @@ class _ScheduleItem extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: IntrinsicHeight(child: Row(children: [
-        // Time column
-        SizedBox(width: 60, child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(DateFormat('hh:mm a').format(entry.startTime),
-              style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700,
-                  color: OV.onSurface, letterSpacing: 0.2)),
-          Text(DateFormat('hh:mm a').format(entry.endTime),
-              style: GoogleFonts.inter(fontSize: 10, color: OV.outline)),
+        SizedBox(width: 64, child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(appt.timeSlot, style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700,
+              color: OV.onSurface, letterSpacing: 0.2)),
+          Text('${appt.durationMinutes}m', style: GoogleFonts.inter(fontSize: 10, color: OV.outline)),
         ])),
         const SizedBox(width: 12),
-        // Vertical line + dot
         Column(children: [
           Container(width: 10, height: 10,
               decoration: BoxDecoration(color: _lineColor, shape: BoxShape.circle)),
           Expanded(child: Container(width: 2, color: _lineColor.withOpacity(0.2))),
         ]),
         const SizedBox(width: 12),
-        // Card
         Expanded(child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
@@ -391,15 +428,18 @@ class _ScheduleItem extends StatelessWidget {
                     blurRadius: 8, offset: const Offset(0, 2))]),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Expanded(child: Text(entry.title, style: GoogleFonts.manrope(
+                Expanded(child: Text(appt.patientName, style: GoogleFonts.manrope(
                     fontSize: 13, fontWeight: FontWeight.w700, color: OV.onSurface))),
-                if (entry.isNew) Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: OV.primaryContainer, borderRadius: BorderRadius.circular(6)),
-                    child: Text('New Case', style: GoogleFonts.inter(
-                        fontSize: 9, fontWeight: FontWeight.w700, color: OV.primary))),
+                DStatusBadge(status: appt.status),
               ]),
               const SizedBox(height: 2),
-              Text(entry.location, style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+              Text(appt.doctorSpecialty.isNotEmpty ? appt.doctorSpecialty : 'Consultation',
+                  style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+              if (appt.notes.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(appt.notes, style: GoogleFonts.inter(fontSize: 10, color: OV.outline),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ],
             ]))),
       ])));
 }

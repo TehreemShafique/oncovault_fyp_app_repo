@@ -9,6 +9,7 @@ import '../../services/doctor_service.dart';
 import 'doctor_widgets.dart';
 import 'full_medical_history_screen.dart';
 import 'add_diagnosis_screen.dart';
+import 'prescription_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
   final String patientId, doctorId;
@@ -121,28 +122,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 14)),
 
-        // ── Action Buttons ────────────────────────────────────────
-        SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(children: [
-              Expanded(child: OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.video_call_rounded, size: 16),
-                  label: Text('Telehealth', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700)),
-                  style: OutlinedButton.styleFrom(foregroundColor: OV.primary,
-                      side: BorderSide(color: OV.primary.withOpacity(0.4)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12)))),
-              const SizedBox(width: 10),
-              Expanded(child: OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.print_outlined, size: 16),
-                  label: Text('Export', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700)),
-                  style: OutlinedButton.styleFrom(foregroundColor: OV.onSurface,
-                      side: BorderSide(color: OV.outlineVariant),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12)))),
-            ]))),
+
 
         const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
@@ -181,29 +161,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
                       body: 'Recommend baseline echocardiogram before starting Cycle 4 per updated protocol.'),
                 ])))),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
-        // ── Recent Labs & Biomarkers ──────────────────────────────
-        SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: SectionHeader(
-                title: 'Recent Labs & Biomarkers',
-                action: 'View Full Report',
-                onAction: () => Navigator.push(context, dSlide(
-                    FullMedicalHistoryScreen(patientId: widget.patientId, doctorId: widget.doctorId, patientName: p.name)))))),
-        const SliverToBoxAdapter(child: SizedBox(height: 12)),
-        SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: DCard(child: Column(children: [
-              _LabRow(name: 'Hemoglobin', value: '12.4', unit: 'g/dL',
-                  status: 'WITHIN RANGE', statusColor: OV.tertiary, bars: [0.7,0.8,0.75,0.82]),
-              DividerLine(),
-              _LabRow(name: 'Creatinine', value: '0.9', unit: 'mg/dL',
-                  status: 'STABLE TREND', statusColor: OV.secondary, bars: [0.6,0.65,0.62,0.63]),
-              DividerLine(),
-              _LabRow(name: 'CA 19-9', value: '42', unit: 'U/mL',
-                  status: 'DECREASING ▾', statusColor: OV.tertiary, bars: [0.9,0.85,0.75,0.65], isDecreasing: true),
-            ])))),
 
         const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
@@ -229,13 +187,27 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ])),
-      floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => Navigator.push(context, dSlide(AddDiagnosisScreen(
-              patientId: widget.patientId, patientName: p.name, doctorId: widget.doctorId,
-              doctorName: 'Dr. ${_profile?.name ?? 'Doctor'}'))),
-          backgroundColor: OV.slateDark, foregroundColor: Colors.white,
-          icon: const Icon(Icons.add_rounded),
-          label: Text('Add Diagnosis Note', style: GoogleFonts.manrope(fontWeight: FontWeight.w700))),
+      floatingActionButton: Column(mainAxisSize: MainAxisSize.min, children: [
+        FloatingActionButton(
+            heroTag: 'prescription',
+            onPressed: () => Navigator.push(context, dSlide(PrescriptionScreen(
+                doctorId: widget.doctorId,
+                doctorName: widget.doctorId,
+                doctorSpecialty: '',
+                patientId: widget.patientId,
+                patientName: p.name))),
+            backgroundColor: OV.primary, foregroundColor: Colors.white,
+            child: const Icon(Icons.medication_rounded)),
+        const SizedBox(height: 12),
+        FloatingActionButton.extended(
+            heroTag: 'diagnosis',
+            onPressed: () => Navigator.push(context, dSlide(AddDiagnosisScreen(
+                patientId: widget.patientId, patientName: p.name, doctorId: widget.doctorId,
+                doctorName: widget.doctorId))),
+            backgroundColor: OV.slateDark, foregroundColor: Colors.white,
+            icon: const Icon(Icons.add_rounded),
+            label: Text('Add Diagnosis', style: GoogleFonts.manrope(fontWeight: FontWeight.w700))),
+      ]),
     );
   }
 }
@@ -287,41 +259,7 @@ class _InsightRow extends StatelessWidget {
       ]));
 }
 
-class _LabRow extends StatelessWidget {
-  final String name, value, unit, status; final Color statusColor;
-  final List<double> bars; final bool isDecreasing;
-  const _LabRow({required this.name, required this.value, required this.unit,
-    required this.status, required this.statusColor, required this.bars, this.isDecreasing = false});
-  @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(name, style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
-          const SizedBox(height: 2),
-          RichText(text: TextSpan(children: [
-            TextSpan(text: value, style: GoogleFonts.manrope(
-                fontSize: 20, fontWeight: FontWeight.w700, color: OV.onSurface)),
-            TextSpan(text: '  $unit', style: GoogleFonts.inter(fontSize: 11, color: OV.outline)),
-          ])),
-          const SizedBox(height: 4),
-          Row(children: [
-            Icon(isDecreasing ? Icons.trending_down_rounded : Icons.trending_up_rounded,
-                size: 10, color: statusColor),
-            const SizedBox(width: 3),
-            Text(status, style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w700,
-                letterSpacing: 0.5, color: statusColor)),
-          ]),
-        ])),
-        Row(children: bars.map((h) => Container(
-            width: 10, height: h * 40,
-            margin: const EdgeInsets.only(left: 3),
-            decoration: BoxDecoration(
-                color: isDecreasing && h == bars.last ? OV.error
-                    : h == bars.last ? OV.primary : OV.outlineVariant.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(3)))).toList()),
-      ]));
-}
+
 
 class _ClinicalEntry extends StatelessWidget {
   final DiagnosisEntry entry;

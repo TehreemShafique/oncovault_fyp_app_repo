@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../services/auth_service.dart';
+import '../services/appointment_service.dart';
 import 'login_screen.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -83,6 +84,10 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
         role: widget.selectedRole,
       );
       if (!mounted) return;
+      // Seed sample medical records for new patients
+      if (widget.selectedRole == 'patient' && user != null) {
+        await MedicalRecordService().seedSampleRecords(user.uid, user.name);
+      }
       // Show generated Medical ID then go to login
       await showDialog(context: context, barrierDismissible: false, builder: (_) =>
           _MedicalIdDialog(medicalId: user?.medicalId ?? ''));
@@ -166,7 +171,7 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
 
                       _Label('Full Name'),
                       const SizedBox(height: 8),
-                      _Field(controller: _nameCtrl, hint: 'Dr. Sarah Johnson', icon: Icons.person_outline_rounded,
+                      _Field(controller: _nameCtrl, hint: 'Enter your full name', icon: Icons.person_outline_rounded,
                           validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your full name' : null),
 
                       const SizedBox(height: 16),

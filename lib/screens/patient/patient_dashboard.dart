@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
+import '../../services/auth_service.dart';
+import '../profile_selection_screen.dart';
 import '../../models/appointment_model.dart';
 import '../../models/patient_profile_model.dart';
 import '../../services/appointment_service.dart';
@@ -113,6 +115,34 @@ class _DashboardHome extends StatelessWidget {
                           ]));
                     }),
                 const SizedBox(width: 10),
+                // Logout button
+                GestureDetector(
+                    onTap: () async {
+                      final confirm = await showDialog<bool>(context: context,
+                          builder: (_) => AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              title: Text('Sign Out', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700)),
+                              content: Text('Are you sure you want to sign out?',
+                                  style: GoogleFonts.inter(fontSize: 14, color: OV.onSurfaceVariant)),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(context, false),
+                                    child: Text('Cancel', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: OV.onSurfaceVariant))),
+                                ElevatedButton(onPressed: () => Navigator.pop(context, true),
+                                    style: ElevatedButton.styleFrom(backgroundColor: OV.error, elevation: 0,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                                    child: Text('Sign Out', style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: Colors.white))),
+                              ]));
+                      if (confirm == true && context.mounted) {
+                        await AuthService().signOut();
+                        if (context.mounted) Navigator.pushAndRemoveUntil(context,
+                            MaterialPageRoute(builder: (_) => const ProfileSelectionScreen()), (r) => false);
+                      }
+                    },
+                    child: Container(padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
+                        child: Icon(Icons.logout_rounded, size: 16, color: OV.error))),
+                const SizedBox(width: 8),
                 GestureDetector(
                     onTap: () => Navigator.push(context, _slide(
                         PatientProfileScreen(patientId: patientId))),
@@ -218,12 +248,10 @@ class _DiagnosisCard extends StatelessWidget {
         if (snap.hasData && snap.data!.exists) {
           profile = PatientProfile.fromMap(snap.data!.data() as Map<String, dynamic>);
         }
-        final diagnosis = profile?.activeDiagnosis.isNotEmpty == true
-            ? profile!.activeDiagnosis : 'Hormone Therapy - Phase 2';
-        final phase = profile?.diagnosisPhase.isNotEmpty == true
-            ? profile!.diagnosisPhase : 'Progressing according to treatment plan.';
-        final startDate = profile?.diagnosisStartDate ?? DateTime(2023, 8, 12);
-        final weeks = profile?.diagnosisDurationWeeks ?? 14;
+        final diagnosis = profile?.activeDiagnosis ?? '';
+        final phase = profile?.diagnosisPhase ?? '';
+        final startDate = profile?.diagnosisStartDate;
+        final weeks = profile?.diagnosisDurationWeeks ?? 0;
 
         return Container(
           padding: const EdgeInsets.all(20),
@@ -235,16 +263,32 @@ class _DiagnosisCard extends StatelessWidget {
                 child: Text('Active Diagnosis', style: GoogleFonts.inter(
                     fontSize: 11, fontWeight: FontWeight.w600, color: OV.primary))),
             const SizedBox(height: 12),
-            Text(diagnosis, style: GoogleFonts.manrope(
-                fontSize: 22, fontWeight: FontWeight.w700, color: OV.onSurface, height: 1.2)),
-            const SizedBox(height: 8),
-            Text(phase, style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.5)),
-            const SizedBox(height: 16),
-            Row(children: [
-              _DiagnosisMeta(label: 'START DATE',
-                  value: DateFormat('MMM d, yyyy').format(startDate)),
-              const SizedBox(width: 32),
-              _DiagnosisMeta(label: 'DURATION', value: '$weeks Weeks'),
+            diagnosis.isNotEmpty
+                ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(diagnosis, style: GoogleFonts.manrope(
+                  fontSize: 22, fontWeight: FontWeight.w700, color: OV.onSurface, height: 1.2)),
+              const SizedBox(height: 8),
+              if (phase.isNotEmpty)
+                Text(phase, style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.5)),
+              if (startDate != null || weeks > 0) ...[
+                const SizedBox(height: 16),
+                Row(children: [
+                  if (startDate != null) ...[
+                    _DiagnosisMeta(label: 'START DATE',
+                        value: DateFormat('MMM d, yyyy').format(startDate!)),
+                    const SizedBox(width: 32),
+                  ],
+                  if (weeks > 0)
+                    _DiagnosisMeta(label: 'DURATION', value: '$weeks Weeks'),
+                ]),
+              ],
+            ])
+                : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('No Active Diagnosis', style: GoogleFonts.manrope(
+                  fontSize: 18, fontWeight: FontWeight.w600, color: OV.onSurfaceVariant)),
+              const SizedBox(height: 6),
+              Text('Your doctor will update your diagnosis here.',
+                  style: GoogleFonts.inter(fontSize: 13, color: OV.outlineVariant, height: 1.4)),
             ]),
           ]),
         );
@@ -356,11 +400,7 @@ class _NextAppointmentCard extends StatelessWidget {
                 ])),
                 Icon(Icons.chevron_right_rounded, color: OV.outline),
               ])),
-          const SizedBox(height: 10),
-          GestureDetector(
-              onTap: () {},
-              child: Text('Add to calendar →', style: GoogleFonts.inter(
-                  fontSize: 13, fontWeight: FontWeight.w500, color: OV.primary))),
+
         ]));
       },
     );
@@ -418,11 +458,14 @@ class _HealthTrendsCard extends StatelessWidget {
         Icon(Icons.trending_up_rounded, color: OV.primary, size: 20),
       ]),
       const SizedBox(height: 16),
-      _TrendRow(label: 'Sleep Quality', value: '84%', percent: 0.84),
+      _TrendRow(label: 'Sleep Quality', value: 'N/A', percent: 0.0),
       const SizedBox(height: 12),
-      _TrendRow(label: 'Vitality Index', value: 'Good', percent: 0.72),
+      _TrendRow(label: 'Vitality Index', value: 'N/A', percent: 0.0),
       const SizedBox(height: 12),
-      _TrendRow(label: 'Pain Level', value: 'Low', percent: 0.2, isInverse: true),
+      _TrendRow(label: 'Pain Level', value: 'N/A', percent: 0.0),
+      const SizedBox(height: 8),
+      Text('Health trend data will appear as your doctor updates your records.',
+          style: GoogleFonts.inter(fontSize: 11, color: OV.outline, height: 1.4)),
     ],
   ));
 }
@@ -521,7 +564,7 @@ class _BottomNav extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _NavItem(icon: Icons.grid_view_rounded, label: 'Dashboard', selected: currentIndex == 0, onTap: () => onTap(0)),
-          _NavItem(icon: Icons.person_outline_rounded, label: 'Patients', selected: currentIndex == 1, onTap: () => onTap(1)),
+          _NavItem(icon: Icons.calendar_month_rounded, label: 'Appointments', selected: currentIndex == 1, onTap: () => onTap(1)),
           _NavItem(icon: Icons.calendar_month_rounded, label: 'Schedule', selected: currentIndex == 2, onTap: () => onTap(2)),
           _NavItem(icon: Icons.folder_outlined, label: 'Archive', selected: currentIndex == 3, onTap: () => onTap(3)),
         ],

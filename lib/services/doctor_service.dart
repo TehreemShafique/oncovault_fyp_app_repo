@@ -26,19 +26,29 @@ class DoctorService {
 
   // ── Doctor Profile ────────────────────────────────────────────
   Future<DoctorModel?> fetchDoctor(String uid) async {
-    final doc = await _doctors.doc(uid).get();
-    if (!doc.exists) {
-      // Try users collection fallback
+    try {
+      final doc = await _doctors.doc(uid).get();
+      if (doc.exists) {
+        return DoctorModel.fromMap(doc.data() as Map<String, dynamic>);
+      }
+      // Fall back to /users collection (new doctor who hasn't updated profile yet)
       final userDoc = await _users.doc(uid).get();
       if (!userDoc.exists) return null;
       final data = userDoc.data() as Map<String, dynamic>;
-      return DoctorModel(
-        uid: uid, name: data['name'] ?? '',
-        email: data['email'] ?? '', medicalId: data['medicalId'] ?? '',
+      // Auto-create a doctor profile from user data and save it
+      final doctorProfile = DoctorModel(
+        uid: uid,
+        name: data['name'] ?? '',
+        email: data['email'] ?? '',
+        medicalId: data['medicalId'] ?? '',
         createdAt: DateTime.now(),
       );
+      // Save to /doctors so next load is instant
+      await _doctors.doc(uid).set(doctorProfile.toMap(), SetOptions(merge: true));
+      return doctorProfile;
+    } catch (e) {
+      return null;
     }
-    return DoctorModel.fromMap(doc.data() as Map<String, dynamic>);
   }
 
   Future<void> updateDoctorProfile(DoctorModel doctor) async {
@@ -52,21 +62,27 @@ class DoctorService {
   Stream<List<AppointmentModel>> watchDoctorAppointments(String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
-          .orderBy('appointmentDate', descending: false)
           .snapshots()
-          .map((s) => s.docs
-          .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
-          .toList());
+          .map((s) {
+        final list = s.docs
+            .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
+            .toList();
+        list.sort((a, b) => a.appointmentDate.compareTo(b.appointmentDate));
+        return list;
+      });
 
   Stream<List<AppointmentModel>> watchPendingAppointments(String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
           .where('status', isEqualTo: 'pending')
-          .orderBy('createdAt', descending: true)
           .snapshots()
-          .map((s) => s.docs
-          .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
-          .toList());
+          .map((s) {
+        final list = s.docs
+            .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
+            .toList();
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return list;
+      });
 
   Future<void> approveAppointment(AppointmentModel appt) async {
     final data = {
