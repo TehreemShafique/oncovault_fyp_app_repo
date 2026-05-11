@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
 
@@ -38,6 +39,74 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   @override
   void dispose() { _medIdCtrl.dispose(); _passCtrl.dispose(); _cardCtrl.dispose(); super.dispose(); }
+
+  Future<void> _showForgotPassword(BuildContext context) async {
+    final emailCtrl = TextEditingController();
+    await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text('Reset Password', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700)),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Enter your registered email address. We will send you a link to reset your password.',
+                  style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.5)),
+              const SizedBox(height: 16),
+              TextField(
+                  controller: emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  style: GoogleFonts.inter(fontSize: 14, color: OV.onSurface),
+                  decoration: InputDecoration(
+                      hintText: 'your@email.com',
+                      hintStyle: GoogleFonts.inter(fontSize: 14, color: OV.outline),
+                      prefixIcon: Icon(Icons.email_outlined, color: OV.outline, size: 18),
+                      filled: true, fillColor: OV.surfaceLow,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: OV.primary, width: 1.5)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4))),
+            ]),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx),
+                  child: Text('Cancel', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: OV.onSurfaceVariant))),
+              ElevatedButton(
+                  onPressed: () async {
+                    final email = emailCtrl.text.trim();
+                    if (email.isEmpty || !email.contains('@')) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('Please enter a valid email address',
+                              style: GoogleFonts.inter(fontSize: 13)),
+                          backgroundColor: OV.error, behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+                      return;
+                    }
+                    Navigator.pop(ctx);
+                    try {
+                      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('Password reset email sent to $email',
+                                style: GoogleFonts.inter(fontSize: 13)),
+                            backgroundColor: OV.tertiary, behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('No account found with this email.',
+                                style: GoogleFonts.inter(fontSize: 13)),
+                            backgroundColor: OV.error, behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: OV.primary, elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  child: Text('Send Reset Link', style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: Colors.white))),
+            ]));
+  }
 
   Future<void> _handleSignIn() async {
     if (!_formKey.currentState!.validate()) return;
@@ -128,7 +197,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       const SizedBox(height: 18),
                       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                         _Label('Password'),
-                        Text('Forgot?', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: OV.primary)),
+                        GestureDetector(
+                            onTap: () => _showForgotPassword(context),
+                            child: Text('Forgot?', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: OV.primary))),
                       ]),
                       const SizedBox(height: 8),
                       TextFormField(
@@ -158,15 +229,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 const Icon(Icons.arrow_forward_rounded, size: 18),
                               ]))),
 
-                      const SizedBox(height: 24),
-                      _divider('BIOMETRIC SECURE LOGIN'),
-                      const SizedBox(height: 16),
-                      Row(children: [
-                        Expanded(child: _BiometricTile(icon: Icons.face_retouching_natural_rounded, label: 'FaceID')),
-                        const SizedBox(width: 12),
-                        Expanded(child: _BiometricTile(icon: Icons.fingerprint_rounded, label: 'TouchID')),
-                      ]),
+
                       const SizedBox(height: 22),
+
                       Center(child: RichText(textAlign: TextAlign.center, text: TextSpan(
                           style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.6),
                           children: [

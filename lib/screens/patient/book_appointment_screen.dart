@@ -2,8 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../theme/app_theme.dart';
-import '../../models/patient_profile_model.dart';
 import '../../services/appointment_service.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
@@ -15,9 +15,10 @@ class BookAppointmentScreen extends StatefulWidget {
 
 class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   final _service = AppointmentService();
-  final _doctors  = DoctorInfo.mockDoctors;
+  List<_RealDoctor> _doctors = [];
+  bool _loadingDoctors = true;
 
-  DoctorInfo? _selectedDoctor;
+  _RealDoctor? _selectedDoctor;
   DateTime _focusedMonth = DateTime.now();
   DateTime? _selectedDate;
   String? _selectedSlot;
@@ -34,10 +35,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   List<String> get _morningSlots => ['08:00 AM', '09:30 AM', '11:00 AM'];
   List<String> get _afternoonSlots => ['01:30 PM', '03:00 PM', '04:30 PM'];
 
-  List<String> get _availableSlots {
-    if (_selectedDoctor == null) return [];
-    return _selectedDoctor!.availableSlots;
-  }
+  List<String> get _availableSlots => _selectedDoctor?.availableSlots ?? [];
 
   Future<void> _confirmBooking() async {
     if (_selectedDoctor == null || _selectedDate == null || _selectedSlot == null) {
@@ -53,9 +51,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       await _service.bookAppointment(
         patientId:       widget.patientId,
         patientName:     widget.patientName,
-        doctorId:        _selectedDoctor!.id,
-        doctorName:      _selectedDoctor!.name,
-        doctorSpecialty: _selectedDoctor!.specialty,
+        doctorId:        _selectedDoctor?.id ?? '',
+        doctorName:      _selectedDoctor?.name ?? '',
+        doctorSpecialty: _selectedDoctor?.specialty ?? '',
         appointmentDate: _selectedDate!,
         timeSlot:        _selectedSlot!,
         notes:           _notesCtrl.text.trim(),
@@ -86,7 +84,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               const SizedBox(height: 16),
               Text('Appointment Requested!', style: GoogleFonts.manrope(fontSize: 20, fontWeight: FontWeight.w700, color: OV.onSurface)),
               const SizedBox(height: 8),
-              Text('Your appointment with ${_selectedDoctor!.name} on ${DateFormat('MMM d, yyyy').format(_selectedDate!)} at $_selectedSlot has been submitted and is pending doctor approval.',
+              Text('Your appointment with ${_selectedDoctor?.name ?? 'your doctor'} on ${DateFormat('MMM d, yyyy').format(_selectedDate!)} at ${_selectedSlot ?? ''} has been submitted and is pending doctor approval.',
                   style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.5),
                   textAlign: TextAlign.center),
               const SizedBox(height: 24),
@@ -97,6 +95,39 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                           elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
                       child: Text('Back to Dashboard', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600)))),
             ])));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDoctors();
+  }
+
+  Future<void> _loadDoctors() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('doctors')
+          .get();
+      final docs = snap.docs
+          .where((d) => (d.data()['isAvailable'] ?? true) == true)
+          .map((d) {
+        final data = d.data();
+        return _RealDoctor(
+          id:              d.id,
+          name:            data['name'] ?? 'Doctor',
+          specialty:       data['specialty'] ?? 'Specialist',
+          experienceYears: data['experienceYears'] ?? 0,
+          badge:           data['subSpecialty'] ?? '',
+          availableSlots:  List<String>.from(data['availableSlots'] ?? [
+            '08:00 AM', '09:30 AM', '11:00 AM',
+            '01:30 PM', '03:00 PM', '04:30 PM',
+          ]),
+        );
+      }).toList();
+      if (mounted) setState(() { _doctors = docs; _loadingDoctors = false; });
+    } catch (e) {
+      if (mounted) setState(() => _loadingDoctors = false);
+    }
   }
 
   @override
@@ -116,7 +147,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                           border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
                       child: const Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: OV.onSurface))),
               const SizedBox(width: 12),
-              Text('Access Permissions', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
+              Text('Schedule Appointment', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
             ])),
 
         Expanded(child: SingleChildScrollView(
@@ -130,11 +161,23 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             const SizedBox(height: 24),
 
             // ── Doctor Selection ──────────────────────────────────
-            ..._doctors.map((doc) => _DoctorCard(
-              doctor: doc,
-              isSelected: _selectedDoctor?.id == doc.id,
-              onTap: () => setState(() => _selectedDoctor = doc),
-            )),
+            if (_loadingDoctors)
+              const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: CircularProgressIndicator(color: OV.primary)))
+            else if (_doctors.isEmpty)
+              Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: Text(
+                      'No doctors available. Please check back later.',
+                      style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
+                      textAlign: TextAlign.center)))
+            else
+              ..._doctors.map((doc) => _DoctorCard(
+                doctor: doc,
+                isSelected: _selectedDoctor?.id == doc.id,
+                onTap: () => setState(() => _selectedDoctor = doc),
+              )),
 
             const SizedBox(height: 24),
 
@@ -284,8 +327,20 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   }
 }
 
+// Real doctor data fetched from Firestore
+class _RealDoctor {
+  final String id, name, specialty, badge;
+  final int experienceYears;
+  final List<String> availableSlots;
+  _RealDoctor({
+    required this.id, required this.name, required this.specialty,
+    required this.badge, required this.experienceYears,
+    required this.availableSlots,
+  });
+}
+
 class _DoctorCard extends StatelessWidget {
-  final DoctorInfo doctor; final bool isSelected; final VoidCallback onTap;
+  final _RealDoctor doctor; final bool isSelected; final VoidCallback onTap;
   const _DoctorCard({required this.doctor, required this.isSelected, required this.onTap});
 
   @override

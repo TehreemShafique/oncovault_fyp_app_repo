@@ -114,11 +114,14 @@ class AppointmentService {
   // ── Fetch Patient Appointments ────────────────────────────────
   Stream<List<AppointmentModel>> watchPatientAppointments(String patientId) =>
       _patientAppts(patientId)
-          .orderBy('appointmentDate', descending: false)
           .snapshots()
-          .map((s) => s.docs
-          .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
-          .toList());
+          .map((s) {
+        final list = s.docs
+            .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
+            .toList();
+        list.sort((a, b) => a.appointmentDate.compareTo(b.appointmentDate));
+        return list;
+      });
 
   Future<List<AppointmentModel>> getPatientAppointments(String patientId) async {
     final snap = await _patientAppts(patientId)

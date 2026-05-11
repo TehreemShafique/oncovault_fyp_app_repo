@@ -28,17 +28,8 @@ class NotificationsScreen extends StatelessWidget {
               Text('Notifications', style: GoogleFonts.manrope(
                   fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
               Row(children: [
-                GestureDetector(onTap: () {},
-                    child: Container(padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-                        child: Icon(Icons.search_rounded, size: 16, color: OV.primary))),
-                const SizedBox(width: 8),
-                GestureDetector(onTap: () => service.markAllRead(patientId),
-                    child: Container(padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-                        child: Icon(Icons.settings_outlined, size: 16, color: OV.primary))),
+
+
               ]),
             ])),
 

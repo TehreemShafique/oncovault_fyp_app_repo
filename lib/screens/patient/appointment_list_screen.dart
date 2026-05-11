@@ -37,11 +37,8 @@ class _AppointmentListScreenState extends State<AppointmentListScreen>
         // Header
         Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Notifications', style: GoogleFonts.manrope(
-                  fontSize: 28, fontWeight: FontWeight.w700, color: OV.onSurface, letterSpacing: -0.4)),
-              const SizedBox(height: 4),
               Text('Appointments', style: GoogleFonts.manrope(
-                  fontSize: 18, fontWeight: FontWeight.w600, color: OV.onSurface)),
+                  fontSize: 28, fontWeight: FontWeight.w700, color: OV.onSurface, letterSpacing: -0.4)),
               Text('Manage your medical consultations and history.',
                   style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant, height: 1.5)),
             ])),
@@ -72,13 +69,13 @@ class _AppointmentListScreenState extends State<AppointmentListScreen>
             }
             final all = snap.data ?? [];
             final now = DateTime.now();
+            // Upcoming: status-based (not date-based) so pending stays visible
             final upcoming = all.where((a) =>
-            a.appointmentDate.isAfter(now) &&
-                a.status != AppointmentStatus.cancelled &&
-                a.status != AppointmentStatus.rejected).toList();
+            a.status == AppointmentStatus.pending ||
+                a.status == AppointmentStatus.approved ||
+                a.status == AppointmentStatus.rescheduled).toList();
             final past = all.where((a) =>
-            a.appointmentDate.isBefore(now) ||
-                a.status == AppointmentStatus.completed ||
+            a.status == AppointmentStatus.completed ||
                 a.status == AppointmentStatus.cancelled ||
                 a.status == AppointmentStatus.rejected).toList();
 
@@ -182,10 +179,17 @@ class _AppointmentCard extends StatelessWidget {
               const SizedBox(width: 6),
               Text(a.timeSlot, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: OV.onSurface)),
             ]),
-            if (!isPast && a.status != AppointmentStatus.cancelled) ...[
+            if (!isPast && a.status != AppointmentStatus.cancelled && a.status != AppointmentStatus.rejected) ...[
               const SizedBox(height: 14),
               Row(children: [
-                Expanded(child: GestureDetector(
+                // Cancel button
+                Expanded(child: _CancelButton(
+                    appointment: a,
+                    patientId: patientId,
+                    service: service)),
+                const SizedBox(width: 10),
+                // Reschedule button
+                Expanded(flex: 2, child: GestureDetector(
                     onTap: () => Navigator.push(context, _slide(AppointmentDetailScreen(
                         appointment: a, patientId: patientId, patientName: patientName,
                         openReschedule: true))),
@@ -193,13 +197,6 @@ class _AppointmentCard extends StatelessWidget {
                         decoration: BoxDecoration(color: OV.slateDark, borderRadius: BorderRadius.circular(12)),
                         child: Center(child: Text('Reschedule',
                             style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)))))),
-                const SizedBox(width: 10),
-                // Video icon button (for approved)
-                Container(width: 42, height: 42,
-                    decoration: BoxDecoration(color: OV.surfaceContainer, borderRadius: BorderRadius.circular(12)),
-                    child: Icon(a.status == AppointmentStatus.approved
-                        ? Icons.video_call_rounded : Icons.more_horiz_rounded,
-                        color: OV.onSurfaceVariant, size: 20)),
               ]),
             ],
             if (isPast && a.status == AppointmentStatus.completed)
@@ -209,6 +206,56 @@ class _AppointmentCard extends StatelessWidget {
           ]),
         ));
   }
+}
+
+
+// ── Inline cancel button with confirmation ────────────────────────────────────
+class _CancelButton extends StatefulWidget {
+  final AppointmentModel appointment;
+  final String patientId;
+  final AppointmentService service;
+  const _CancelButton({required this.appointment, required this.patientId, required this.service});
+  @override
+  State<_CancelButton> createState() => _CancelButtonState();
+}
+
+class _CancelButtonState extends State<_CancelButton> {
+  bool _cancelling = false;
+
+  Future<void> _cancel() async {
+    final confirm = await showDialog<bool>(context: context,
+        builder: (_) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text('Cancel Appointment', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700)),
+            content: Text('Are you sure you want to cancel your appointment with ${widget.appointment.doctorName}?',
+                style: GoogleFonts.inter(fontSize: 14, color: OV.onSurfaceVariant, height: 1.5)),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false),
+                  child: Text('Keep it', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: OV.onSurfaceVariant))),
+              ElevatedButton(onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(backgroundColor: OV.error, elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  child: Text('Yes, Cancel', style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: Colors.white))),
+            ]));
+    if (confirm != true || !mounted) return;
+    setState(() => _cancelling = true);
+    await widget.service.cancelAppointment(widget.appointment.id, widget.patientId);
+    if (mounted) setState(() => _cancelling = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+      onTap: _cancelling ? null : _cancel,
+      child: Container(height: 42,
+          decoration: BoxDecoration(
+              color: OV.errorContainer,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: OV.error.withOpacity(0.2))),
+          child: _cancelling
+              ? const Center(child: SizedBox(width: 16, height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: OV.error)))
+              : Center(child: Text('Cancel',
+              style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: OV.error)))));
 }
 
 class _StatusBadge extends StatelessWidget {

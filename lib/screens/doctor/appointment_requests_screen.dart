@@ -68,15 +68,17 @@ class _AppointmentRequestsScreenState extends State<AppointmentRequestsScreen>
                 }
                 final all = snap.data ?? [];
                 final now = DateTime.now();
-                final pending   = all.where((a) => a.status == AppointmentStatus.pending).toList();
-                final upcoming  = all.where((a) =>
-                a.appointmentDate.isAfter(now) &&
-                    (a.status == AppointmentStatus.approved || a.status == AppointmentStatus.rescheduled)).toList();
-                final past      = all.where((a) =>
+                // Pending stays in Pending tab regardless of date
+                final pending  = all.where((a) => a.status == AppointmentStatus.pending).toList();
+                // Upcoming = approved/rescheduled (status-based, not date-based)
+                final upcoming = all.where((a) =>
+                a.status == AppointmentStatus.approved ||
+                    a.status == AppointmentStatus.rescheduled).toList();
+                // Past = only truly finished/cancelled/rejected
+                final past     = all.where((a) =>
                 a.status == AppointmentStatus.completed ||
                     a.status == AppointmentStatus.cancelled ||
-                    a.status == AppointmentStatus.rejected ||
-                    a.appointmentDate.isBefore(now)).toList();
+                    a.status == AppointmentStatus.rejected).toList();
 
                 return TabBarView(controller: _tab, children: [
                   _ApptList(appts: pending, service: _service, doctorName: widget.doctorName,

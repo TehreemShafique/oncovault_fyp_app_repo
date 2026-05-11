@@ -25,6 +25,13 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
 
   Future<void> _load() async {
     final d = await _service.fetchDoctor(widget.doctorId);
+    if (d != null) {
+      // If profile came from users fallback, it may be missing specialty etc.
+      // Re-save so next load is from doctors collection with full data
+      if (d.specialty.isEmpty && d.name.isNotEmpty) {
+        await _service.updateDoctorProfile(d);
+      }
+    }
     setState(() { _doctor = d; _loading = false; });
   }
 
@@ -36,8 +43,28 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     }
     final d = _doctor;
     if (d == null) {
-      return Scaffold(body: Center(child: Text('Profile not found',
-          style: GoogleFonts.inter(fontSize: 15))));
+      // Show retry screen instead of blank "not found"
+      return Scaffold(backgroundColor: OV.background,
+          body: SafeArea(child: Center(child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.error_outline_rounded, size: 48, color: OV.outlineVariant),
+                const SizedBox(height: 16),
+                Text('Could not load profile', style: GoogleFonts.manrope(
+                    fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
+                const SizedBox(height: 8),
+                Text('Please check your connection and try again.',
+                    style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                    onPressed: () { setState(() => _loading = true); _load(); },
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text('Retry', style: GoogleFonts.manrope(fontWeight: FontWeight.w700)),
+                    style: ElevatedButton.styleFrom(backgroundColor: OV.slateDark,
+                        foregroundColor: Colors.white, elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
+              ])))));
     }
 
     return Scaffold(
@@ -106,19 +133,37 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
           if (d.hospital.isNotEmpty)
             _Chip(d.hospital, OV.tertiaryContainer, OV.tertiary),
         ]),
+        if (d.specialty.isEmpty) ...[
+          const SizedBox(height: 12),
+          GestureDetector(
+              onTap: () => _showEditSheet(context, d),
+              child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(100),
+                      border: Border.all(color: const Color(0xFF8B5000).withOpacity(0.3))),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.edit_rounded, size: 12, color: Color(0xFF8B5000)),
+                    const SizedBox(width: 6),
+                    Text('Tap Edit to complete your profile',
+                        style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600,
+                            color: const Color(0xFF8B5000))),
+                  ]))),
+        ],
       ])));
 
   Widget _buildStatsRow(DoctorModel d) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(children: [
         _StatBlock(label: 'Specialty',
-            value: d.specialty.isNotEmpty ? d.specialty : 'Not set'),
+            value: d.specialty.isNotEmpty ? d.specialty : '—'),
         const SizedBox(width: 8),
         _StatBlock(label: 'Experience',
-            value: d.experienceYears > 0 ? '${d.experienceYears} Yrs' : 'Not set'),
+            value: d.experienceYears > 0 ? '${d.experienceYears} Yrs' : '—'),
         const SizedBox(width: 8),
         _StatBlock(label: 'Department',
-            value: d.department.isNotEmpty ? d.department : 'Not set'),
+            value: d.department.isNotEmpty ? d.department : '—'),
       ]));
 
   Widget _buildInfoCard(DoctorModel d) => Padding(
@@ -127,10 +172,10 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
         _InfoRow(icon: Icons.email_outlined, label: 'EMAIL', value: d.email),
         DividerLine(),
         _InfoRow(icon: Icons.phone_outlined, label: 'PHONE',
-            value: d.phone.isNotEmpty ? d.phone : 'Not provided'),
+            value: d.phone.isNotEmpty ? d.phone : 'Tap Edit to add'),
         DividerLine(),
         _InfoRow(icon: Icons.badge_outlined, label: 'LICENSE NO.',
-            value: d.licenseNumber.isNotEmpty ? d.licenseNumber : 'Not provided'),
+            value: d.licenseNumber.isNotEmpty ? d.licenseNumber : 'Tap Edit to add'),
         if (d.qualifications.isNotEmpty) ...[
           DividerLine(),
           _InfoRow(icon: Icons.school_outlined, label: 'QUALIFICATIONS',

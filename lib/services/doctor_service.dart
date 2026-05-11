@@ -26,54 +26,75 @@ class DoctorService {
       _db.collection('patients').doc(patientId).collection('appointments');
 
   // ── Doctor Profile ────────────────────────────────────────────
+  // Kept friend's improved version with try/catch + auto-save
   Future<DoctorModel?> fetchDoctor(String uid) async {
-    final doc = await _doctors.doc(uid).get();
-    if (!doc.exists) {
+    try {
+      final doc = await _doctors.doc(uid).get();
+      if (doc.exists) {
+        return DoctorModel.fromMap(doc.data() as Map<String, dynamic>);
+      }
       final userDoc = await _users.doc(uid).get();
       if (!userDoc.exists) return null;
       final data = userDoc.data() as Map<String, dynamic>;
-      return DoctorModel(
-        uid: uid, name: data['name'] ?? '',
-        email: data['email'] ?? '',
+      final doctorProfile = DoctorModel(
+        uid      : uid,
+        name     : data['name']      ?? '',
+        email    : data['email']     ?? '',
         medicalId: data['medicalId'] ?? '',
         createdAt: DateTime.now(),
       );
+      await _doctors.doc(uid).set(
+          doctorProfile.toMap(), SetOptions(merge: true));
+      return doctorProfile;
+    } catch (e) {
+      return null;
     }
-    return DoctorModel.fromMap(doc.data() as Map<String, dynamic>);
   }
 
   Future<void> updateDoctorProfile(DoctorModel doctor) async {
     final batch = _db.batch();
-    batch.set(_doctors.doc(doctor.uid), doctor.toMap(), SetOptions(merge: true));
-    batch.set(_users.doc(doctor.uid), doctor.toMap(), SetOptions(merge: true));
+    batch.set(_doctors.doc(doctor.uid), doctor.toMap(),
+        SetOptions(merge: true));
+    batch.set(_users.doc(doctor.uid), doctor.toMap(),
+        SetOptions(merge: true));
     await batch.commit();
   }
 
   // ── Appointments ──────────────────────────────────────────────
-  Stream<List<AppointmentModel>> watchDoctorAppointments(String doctorId) =>
+  // Kept friend's improved version with client-side sort
+  Stream<List<AppointmentModel>> watchDoctorAppointments(
+      String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
-          .orderBy('appointmentDate', descending: false)
           .snapshots()
-          .map((s) => s.docs
-          .map((d) => AppointmentModel.fromMap(
-          d.data() as Map<String, dynamic>))
-          .toList());
+          .map((s) {
+        final list = s.docs
+            .map((d) => AppointmentModel.fromMap(
+            d.data() as Map<String, dynamic>))
+            .toList();
+        list.sort((a, b) =>
+            a.appointmentDate.compareTo(b.appointmentDate));
+        return list;
+      });
 
-  Stream<List<AppointmentModel>> watchPendingAppointments(String doctorId) =>
+  Stream<List<AppointmentModel>> watchPendingAppointments(
+      String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
-          .where('status', isEqualTo: 'pending')
-          .orderBy('createdAt', descending: true)
+          .where('status',   isEqualTo: 'pending')
           .snapshots()
-          .map((s) => s.docs
-          .map((d) => AppointmentModel.fromMap(
-          d.data() as Map<String, dynamic>))
-          .toList());
+          .map((s) {
+        final list = s.docs
+            .map((d) => AppointmentModel.fromMap(
+            d.data() as Map<String, dynamic>))
+            .toList();
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return list;
+      });
 
   Future<void> approveAppointment(AppointmentModel appt) async {
     final data = {
-      'status': AppointmentStatus.approved.firestoreValue,
+      'status'   : AppointmentStatus.approved.firestoreValue,
       'updatedAt': Timestamp.now(),
     };
     final batch = _db.batch();
@@ -81,11 +102,12 @@ class DoctorService {
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
     await batch.commit();
     await _sendPatientNotification(
-      patientId: appt.patientId,
-      title: 'Appointment Approved ✓',
-      body: 'Your appointment with ${appt.doctorName} on '
-          '${_fmt(appt.appointmentDate)} at ${appt.timeSlot} has been approved.',
-      type: 'appointment',
+      patientId  : appt.patientId,
+      title      : 'Appointment Approved ✓',
+      body       : 'Your appointment with ${appt.doctorName} on '
+          '${_fmt(appt.appointmentDate)} at ${appt.timeSlot} '
+          'has been approved.',
+      type       : 'appointment',
       referenceId: appt.id,
     );
   }
@@ -93,9 +115,9 @@ class DoctorService {
   Future<void> rejectAppointment(AppointmentModel appt,
       {String reason = ''}) async {
     final data = {
-      'status': AppointmentStatus.rejected.firestoreValue,
+      'status'     : AppointmentStatus.rejected.firestoreValue,
       'doctorNotes': reason,
-      'updatedAt': Timestamp.now(),
+      'updatedAt'  : Timestamp.now(),
     };
     final batch = _db.batch();
     batch.update(_appointments.doc(appt.id), data);
@@ -103,10 +125,11 @@ class DoctorService {
     await batch.commit();
     await _sendPatientNotification(
       patientId: appt.patientId,
-      title: 'Appointment Not Available',
-      body: 'Your appointment for ${_fmt(appt.appointmentDate)} could not be '
-          'accommodated.${reason.isNotEmpty ? ' Reason: $reason' : ''}',
-      type: 'appointment',
+      title    : 'Appointment Not Available',
+      body     : 'Your appointment for ${_fmt(appt.appointmentDate)} '
+          'could not be accommodated.'
+          '${reason.isNotEmpty ? ' Reason: $reason' : ''}',
+      type     : 'appointment',
       referenceId: appt.id,
     );
   }
@@ -118,9 +141,9 @@ class DoctorService {
   }) async {
     final data = {
       'appointmentDate': Timestamp.fromDate(newDate),
-      'timeSlot': newSlot,
-      'status': AppointmentStatus.rescheduled.firestoreValue,
-      'updatedAt': Timestamp.now(),
+      'timeSlot'       : newSlot,
+      'status'         : AppointmentStatus.rescheduled.firestoreValue,
+      'updatedAt'      : Timestamp.now(),
     };
     final batch = _db.batch();
     batch.update(_appointments.doc(appt.id), data);
@@ -128,16 +151,17 @@ class DoctorService {
     await batch.commit();
     await _sendPatientNotification(
       patientId: appt.patientId,
-      title: 'Appointment Rescheduled',
-      body: 'Your appointment has been moved to ${_fmt(newDate)} at $newSlot.',
-      type: 'appointment',
+      title    : 'Appointment Rescheduled',
+      body     : 'Your appointment has been moved to '
+          '${_fmt(newDate)} at $newSlot.',
+      type     : 'appointment',
       referenceId: appt.id,
     );
   }
 
   Future<void> markAppointmentComplete(AppointmentModel appt) async {
     final data = {
-      'status': AppointmentStatus.completed.firestoreValue,
+      'status'   : AppointmentStatus.completed.firestoreValue,
       'updatedAt': Timestamp.now(),
     };
     final batch = _db.batch();
@@ -151,20 +175,15 @@ class DoctorService {
   // FR-M8.1: Only patients with active authorization appear
   // ════════════════════════════════════════════════════════════════
   Stream<List<PatientProfile>> watchDoctorPatients(String doctorId) {
-    // Combines two sources:
-    // 1. Patients who have appointment with this doctor
-    // 2. Patients who granted blockchain consent to this doctor
     return _consents
         .where('doctorId', isEqualTo: doctorId)
         .where('status',   isEqualTo: 'granted')
         .snapshots()
         .asyncMap((snap) async {
-      // Get patient IDs from consents
       final consentedIds = snap.docs
           .map((d) => (d.data() as Map)['patientId'] as String)
           .toSet();
 
-      // Also get patient IDs from appointments
       final apptSnap = await _appointments
           .where('doctorId', isEqualTo: doctorId)
           .get();
@@ -172,16 +191,14 @@ class DoctorService {
           .map((d) => (d.data() as Map)['patientId'] as String)
           .toSet();
 
-      // Merge both sets
       final allIds = {...consentedIds, ...apptIds};
 
-      // Fetch profiles
       final profiles = <PatientProfile>[];
       for (final pid in allIds) {
         final doc = await _patients.doc(pid).get();
         if (doc.exists) {
-          profiles.add(
-              PatientProfile.fromMap(doc.data() as Map<String, dynamic>));
+          profiles.add(PatientProfile.fromMap(
+              doc.data() as Map<String, dynamic>));
         } else {
           final uDoc = await _users.doc(pid).get();
           if (uDoc.exists) {
@@ -202,7 +219,8 @@ class DoctorService {
   Future<PatientProfile?> fetchPatient(String patientId) async {
     final doc = await _patients.doc(patientId).get();
     if (doc.exists) {
-      return PatientProfile.fromMap(doc.data() as Map<String, dynamic>);
+      return PatientProfile.fromMap(
+          doc.data() as Map<String, dynamic>);
     }
     final uDoc = await _users.doc(patientId).get();
     if (!uDoc.exists) return null;
@@ -215,10 +233,8 @@ class DoctorService {
     );
   }
 
-  // ── Check if doctor has consent for patient ───────────────────
-  // FR-M2.2: verify blockchain consent before granting access
+  // ── Consent Management (FR-M2.2, FR-M8.2) ────────────────────
   Future<bool> hasConsent(String doctorId, String patientId) async {
-    // Check consent collection
     final consentSnap = await _consents
         .where('doctorId',  isEqualTo: doctorId)
         .where('patientId', isEqualTo: patientId)
@@ -227,7 +243,6 @@ class DoctorService {
         .get();
     if (consentSnap.docs.isNotEmpty) return true;
 
-    // Also check if they have an appointment together
     final apptSnap = await _appointments
         .where('doctorId',  isEqualTo: doctorId)
         .where('patientId', isEqualTo: patientId)
@@ -236,7 +251,6 @@ class DoctorService {
     return apptSnap.docs.isNotEmpty;
   }
 
-  // ── Grant consent (called from patient side) ──────────────────
   Future<void> grantConsent({
     required String patientId,
     required String doctorId,
@@ -245,25 +259,24 @@ class DoctorService {
   }) async {
     final id = '${patientId}_$doctorId';
     await _consents.doc(id).set({
-      'id'          : id,
-      'patientId'   : patientId,
-      'doctorId'    : doctorId,
-      'patientName' : patientName,
-      'doctorName'  : doctorName,
-      'status'      : 'granted',
-      'grantedAt'   : Timestamp.now(),
+      'id'         : id,
+      'patientId'  : patientId,
+      'doctorId'   : doctorId,
+      'patientName': patientName,
+      'doctorName' : doctorName,
+      'status'     : 'granted',
+      'grantedAt'  : Timestamp.now(),
     });
   }
 
-  // ── Revoke consent (called from patient side) ─────────────────
   Future<void> revokeConsent({
     required String patientId,
     required String doctorId,
   }) async {
     final id = '${patientId}_$doctorId';
     await _consents.doc(id).update({
-      'status'    : 'revoked',
-      'revokedAt' : Timestamp.now(),
+      'status'   : 'revoked',
+      'revokedAt': Timestamp.now(),
     });
   }
 
@@ -274,19 +287,22 @@ class DoctorService {
     final pRef = _patientDiagnoses(entry.patientId).doc(ref.id);
 
     final finalEntry = DiagnosisEntry(
-      id: ref.id, patientId: entry.patientId,
-      patientName: entry.patientName,
-      doctorId: entry.doctorId, doctorName: entry.doctorName,
-      diagnosisTitle: entry.diagnosisTitle,
+      id              : ref.id,
+      patientId       : entry.patientId,
+      patientName     : entry.patientName,
+      doctorId        : entry.doctorId,
+      doctorName      : entry.doctorName,
+      diagnosisTitle  : entry.diagnosisTitle,
       diagnosisDetails: entry.diagnosisDetails,
-      prescription: entry.prescription,
-      clinicalNotes: entry.clinicalNotes,
-      recommendations: entry.recommendations,
+      prescription    : entry.prescription,
+      clinicalNotes   : entry.clinicalNotes,
+      recommendations : entry.recommendations,
       attachedReportUrls: entry.attachedReportUrls,
-      cancerType: entry.cancerType, stage: entry.stage,
-      status: entry.status,
+      cancerType      : entry.cancerType,
+      stage           : entry.stage,
+      status          : entry.status,
       blockchainVerified: true,
-      createdAt: entry.createdAt,
+      createdAt       : entry.createdAt,
     );
 
     final batch = _db.batch();
@@ -309,7 +325,8 @@ class DoctorService {
     );
   }
 
-  Stream<List<DiagnosisEntry>> watchPatientDiagnoses(String patientId) =>
+  Stream<List<DiagnosisEntry>> watchPatientDiagnoses(
+      String patientId) =>
       _patientDiagnoses(patientId)
           .orderBy('createdAt', descending: true)
           .snapshots()
@@ -318,7 +335,8 @@ class DoctorService {
           d.data() as Map<String, dynamic>))
           .toList());
 
-  Stream<List<DiagnosisEntry>> watchDoctorDiagnoses(String doctorId) =>
+  Stream<List<DiagnosisEntry>> watchDoctorDiagnoses(
+      String doctorId) =>
       _diagnoses(doctorId)
           .orderBy('createdAt', descending: true)
           .limit(20)
@@ -332,11 +350,15 @@ class DoctorService {
   Future<void> createAlert(CriticalAlert alert) async {
     final ref = _alerts(alert.doctorId).doc();
     await ref.set(CriticalAlert(
-      id: ref.id, patientId: alert.patientId,
+      id         : ref.id,
+      patientId  : alert.patientId,
       patientName: alert.patientName,
-      doctorId: alert.doctorId, alertType: alert.alertType,
-      severity: alert.severity, title: alert.title,
-      description: alert.description, createdAt: alert.createdAt,
+      doctorId   : alert.doctorId,
+      alertType  : alert.alertType,
+      severity   : alert.severity,
+      title      : alert.title,
+      description: alert.description,
+      createdAt  : alert.createdAt,
     ).toMap());
   }
 
@@ -361,7 +383,8 @@ class DoctorService {
   }
 
   // ── Doctor Notifications ──────────────────────────────────────
-  Stream<List<NotificationModel>> watchDoctorNotifications(String doctorId) =>
+  Stream<List<NotificationModel>> watchDoctorNotifications(
+      String doctorId) =>
       _notifications(doctorId)
           .orderBy('createdAt', descending: true)
           .limit(50)
@@ -371,15 +394,19 @@ class DoctorService {
           d.data() as Map<String, dynamic>))
           .toList());
 
-  Future<void> markDoctorNotifRead(String doctorId, String notifId) async {
-    await _notifications(doctorId).doc(notifId).update({'isRead': true});
+  Future<void> markDoctorNotifRead(
+      String doctorId, String notifId) async {
+    await _notifications(doctorId)
+        .doc(notifId).update({'isRead': true});
   }
 
   Future<void> markAllDoctorNotifsRead(String doctorId) async {
     final snap = await _notifications(doctorId)
         .where('isRead', isEqualTo: false).get();
     final batch = _db.batch();
-    for (final d in snap.docs) batch.update(d.reference, {'isRead': true});
+    for (final d in snap.docs) {
+      batch.update(d.reference, {'isRead': true});
+    }
     await batch.commit();
   }
 
@@ -414,7 +441,8 @@ class DoctorService {
   }
 
   // ── Patient Medical Records ───────────────────────────────────
-  Stream<List<MedicalRecordModel>> watchPatientRecords(String patientId) =>
+  Stream<List<MedicalRecordModel>> watchPatientRecords(
+      String patientId) =>
       _db.collection('patients').doc(patientId)
           .collection('medicalRecords')
           .orderBy('date', descending: true)
@@ -424,7 +452,7 @@ class DoctorService {
           d.data() as Map<String, dynamic>))
           .toList());
 
-  // ── Save EHR vitals ───────────────────────────────────────────
+  // ── EHR Vitals ────────────────────────────────────────────────
   Future<void> saveEhrVitals({
     required String patientId,
     required Map<String, dynamic> vitals,
@@ -435,9 +463,10 @@ class DoctorService {
     );
   }
 
-  // ── Fetch EHR vitals ──────────────────────────────────────────
-  Future<Map<String, dynamic>> fetchEhrVitals(String patientId) async {
-    final doc = await _db.collection('ehr_vitals').doc(patientId).get();
+  Future<Map<String, dynamic>> fetchEhrVitals(
+      String patientId) async {
+    final doc = await _db
+        .collection('ehr_vitals').doc(patientId).get();
     if (!doc.exists) return {};
     return doc.data() as Map<String, dynamic>;
   }
@@ -452,9 +481,13 @@ class DoctorService {
   }) async {
     final ref = _notifications(patientId).doc();
     await ref.set(NotificationModel(
-      id: ref.id, patientId: patientId,
-      title: title, body: body, type: type,
-      createdAt: DateTime.now(), referenceId: referenceId,
+      id         : ref.id,
+      patientId  : patientId,
+      title      : title,
+      body       : body,
+      type       : type,
+      createdAt  : DateTime.now(),
+      referenceId: referenceId,
     ).toMap());
   }
 
@@ -465,25 +498,33 @@ class DoctorService {
     final today = DateTime(now.year, now.month, now.day);
     return [
       ScheduleEntry(id: 's1', doctorId: doctorId,
-          title: 'Consultation: David Ray', location: 'Room 302',
-          type: 'consultation',
+          title    : 'Consultation: David Ray',
+          location : 'Room 302',
+          type     : 'consultation',
           startTime: today.add(const Duration(hours: 9)),
-          endTime  : today.add(const Duration(hours: 9, minutes: 30)),
+          endTime  : today.add(const Duration(
+              hours: 9, minutes: 30)),
           isNew    : true),
       ScheduleEntry(id: 's2', doctorId: doctorId,
-          title: 'Tumor Board Meeting', location: 'Conference Hall B',
-          type: 'board_meeting',
-          startTime: today.add(const Duration(hours: 10, minutes: 15)),
+          title    : 'Tumor Board Meeting',
+          location : 'Conference Hall B',
+          type     : 'board_meeting',
+          startTime: today.add(const Duration(
+              hours: 10, minutes: 15)),
           endTime  : today.add(const Duration(hours: 11))),
       ScheduleEntry(id: 's3', doctorId: doctorId,
-          title: 'Chemo Review: Sarah Webb', location: 'Infusion Center',
-          type: 'review',
-          startTime: today.add(const Duration(hours: 11, minutes: 30)),
+          title    : 'Chemo Review: Sarah Webb',
+          location : 'Infusion Center',
+          type     : 'review',
+          startTime: today.add(const Duration(
+              hours: 11, minutes: 30)),
           endTime  : today.add(const Duration(hours: 12))),
       ScheduleEntry(id: 's4', doctorId: doctorId,
-          title: 'Lab Review: Sam T.', location: 'Telehealth Room',
-          type: 'lab',
-          startTime: today.add(const Duration(hours: 13, minutes: 30)),
+          title    : 'Lab Review: Sam T.',
+          location : 'Telehealth Room',
+          type     : 'lab',
+          startTime: today.add(const Duration(
+              hours: 13, minutes: 30)),
           endTime  : today.add(const Duration(hours: 14))),
     ];
   }

@@ -61,150 +61,149 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     final p = _profile;
     if (p == null) return const Center(child: Text('Profile not found'));
     return SafeArea(child: CustomScrollView(slivers: [
-      // App Bar
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    // App Bar
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          GestureDetector(onTap: () => Navigator.pop(context),
-              child: Container(padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-                  child: const Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: OV.onSurface))),
-          Text('Account', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
-          Container(padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-              child: Icon(Icons.settings_outlined, size: 16, color: OV.primary)),
-        ]),
-      )),
+            GestureDetector(onTap: () => Navigator.pop(context),
+    child: Container(padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
+    border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
+    child: const Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: OV.onSurface))),
+    Text('Account', style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
+    Container(padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
+    border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
+    )]),
+    )),
 
-      // Avatar + Name
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Container(padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 4))]),
-          child: Column(children: [
-            Stack(children: [
-              Container(width: 100, height: 100,
-                  decoration: BoxDecoration(shape: BoxShape.circle,
-                      color: OV.primaryContainer,
-                      border: Border.all(color: OV.primary.withOpacity(0.3), width: 3)),
-                  child: Center(child: Text(p.name.isNotEmpty ? p.name[0].toUpperCase() : 'P',
-                      style: GoogleFonts.manrope(fontSize: 40, fontWeight: FontWeight.w700, color: OV.primary)))),
-              Positioned(bottom: 0, right: 0, child: Container(width: 30, height: 30,
-                  decoration: BoxDecoration(color: OV.slateDark, shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2)),
-                  child: const Icon(Icons.edit_rounded, color: Colors.white, size: 14))),
-            ]),
-            const SizedBox(height: 14),
-            Text(p.name, style: GoogleFonts.manrope(fontSize: 22, fontWeight: FontWeight.w700, color: OV.onSurface)),
-            const SizedBox(height: 8),
-            Wrap(spacing: 8, children: [
-              if (p.age != null) _Chip('${p.age} Years Old', OV.primaryContainer, OV.primary),
-              if (p.gender.isNotEmpty) _Chip(p.gender, OV.secondaryContainer, OV.secondary),
-              _Chip('Patient ID: ${p.medicalId}', OV.tertiaryContainer, OV.tertiary),
-            ]),
-          ]),
-        ),
-      )),
+    // Avatar + Name
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Container(padding: const EdgeInsets.all(24),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24),
+    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 4))]),
+    child: Column(children: [
+    Stack(children: [
+    Container(width: 100, height: 100,
+    decoration: BoxDecoration(shape: BoxShape.circle,
+    color: OV.primaryContainer,
+    border: Border.all(color: OV.primary.withOpacity(0.3), width: 3)),
+    child: Center(child: Text(p.name.isNotEmpty ? p.name[0].toUpperCase() : 'P',
+    style: GoogleFonts.manrope(fontSize: 40, fontWeight: FontWeight.w700, color: OV.primary)))),
+    Positioned(bottom: 0, right: 0, child: Container(width: 30, height: 30,
+    decoration: BoxDecoration(color: OV.slateDark, shape: BoxShape.circle,
+    border: Border.all(color: Colors.white, width: 2)),
+    child: const Icon(Icons.edit_rounded, color: Colors.white, size: 14))),
+    ]),
+    const SizedBox(height: 14),
+    Text(p.name, style: GoogleFonts.manrope(fontSize: 22, fontWeight: FontWeight.w700, color: OV.onSurface)),
+    const SizedBox(height: 8),
+    Wrap(spacing: 8, children: [
+    if (p.age != null) _Chip('${p.age} Years Old', OV.primaryContainer, OV.primary),
+    if (p.gender.isNotEmpty) _Chip(p.gender, OV.secondaryContainer, OV.secondary),
+    _Chip('Patient ID: ${p.medicalId}', OV.tertiaryContainer, OV.tertiary),
+    ]),
+    ]),
+    ),
+    )),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+    const SliverToBoxAdapter(child: SizedBox(height: 24)),
 
-      // Personal Info
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('Personal Info', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
-          GestureDetector(
-              onTap: () => _showEditDialog(context, p),
-              child: Row(children: [
-                Icon(Icons.edit_outlined, size: 14, color: OV.primary),
-                const SizedBox(width: 4),
-                Text('Edit Info', style: GoogleFonts.inter(fontSize: 13, color: OV.primary, fontWeight: FontWeight.w500)),
-              ])),
-        ]),
-      )),
-      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+    // Personal Info
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+    Text('Personal Info', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
+    GestureDetector(
+    onTap: () => _showEditDialog(context, p),
+    child: Row(children: [
+    Icon(Icons.edit_outlined, size: 14, color: OV.primary),
+    const SizedBox(width: 4),
+    Text('Edit Info', style: GoogleFonts.inter(fontSize: 13, color: OV.primary, fontWeight: FontWeight.w500)),
+    ])),
+    ]),
+    )),
+    const SliverToBoxAdapter(child: SizedBox(height: 12)),
 
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Container(padding: const EdgeInsets.all(20), decoration: _cardDec,
-          child: Column(children: [
-            _InfoRow(icon: Icons.email_outlined, label: 'EMAIL ADDRESS', value: p.email),
-            _Divider(),
-            _InfoRow(icon: Icons.phone_outlined, label: 'PHONE NUMBER',
-                value: p.phone.isNotEmpty ? p.phone : 'Not provided'),
-            _Divider(),
-            _InfoRow(icon: Icons.location_on_outlined, label: 'RESIDENTIAL ADDRESS',
-                value: p.address.isNotEmpty ? p.address : 'Not provided'),
-          ]),
-        ),
-      )),
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Container(padding: const EdgeInsets.all(20), decoration: _cardDec,
+    child: Column(children: [
+    _InfoRow(icon: Icons.email_outlined, label: 'EMAIL ADDRESS', value: p.email),
+    _Divider(),
+    _InfoRow(icon: Icons.phone_outlined, label: 'PHONE NUMBER',
+    value: p.phone.isNotEmpty ? p.phone : 'Not provided'),
+    _Divider(),
+    _InfoRow(icon: Icons.location_on_outlined, label: 'RESIDENTIAL ADDRESS',
+    value: p.address.isNotEmpty ? p.address : 'Not provided'),
+    ]),
+    ),
+    )),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+    const SliverToBoxAdapter(child: SizedBox(height: 24)),
 
-      // Medical Info
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Text('Medical Info', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
-      )),
-      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+    // Medical Info
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Text('Medical Info', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
+    )),
+    const SliverToBoxAdapter(child: SizedBox(height: 12)),
 
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(children: [
-          _MedicalInfoCard(
-            icon: Icons.water_drop_outlined,
-            iconBg: OV.errorContainer,
-            iconColor: OV.error,
-            label: 'BLOOD TYPE',
-            value: p.bloodType.isNotEmpty ? p.bloodType : 'Not set',
-            leftBorder: OV.error,
-          ),
-          const SizedBox(height: 12),
-          _MedicalInfoCard(
-            icon: Icons.warning_amber_rounded,
-            iconBg: const Color(0xFFFFF3E0),
-            iconColor: const Color(0xFF8B5000),
-            label: 'ALLERGIES',
-            value: p.allergies.isNotEmpty ? p.allergies.join(', ') : 'None recorded',
-          ),
-        ]),
-      )),
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Column(children: [
+    _MedicalInfoCard(
+    icon: Icons.water_drop_outlined,
+    iconBg: OV.errorContainer,
+    iconColor: OV.error,
+    label: 'BLOOD TYPE',
+    value: p.bloodType.isNotEmpty ? p.bloodType : 'Not set',
+    leftBorder: OV.error,
+    ),
+    const SizedBox(height: 12),
+    _MedicalInfoCard(
+    icon: Icons.warning_amber_rounded,
+    iconBg: const Color(0xFFFFF3E0),
+    iconColor: const Color(0xFF8B5000),
+    label: 'ALLERGIES',
+    value: p.allergies.isNotEmpty ? p.allergies.join(', ') : 'None recorded',
+    ),
+    ]),
+    )),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+    const SliverToBoxAdapter(child: SizedBox(height: 24)),
 
-      // Vault Security
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Container(padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(color: OV.slateDark, borderRadius: BorderRadius.circular(20)),
-          child: Row(children: [
-            Container(width: 44, height: 44,
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), shape: BoxShape.circle),
-                child: const Icon(Icons.shield_outlined, color: Colors.white, size: 22)),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Vault Security', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
-              Text('Your medical records are encrypted with AES-256.',
-                  style: GoogleFonts.inter(fontSize: 12, color: Colors.white.withOpacity(0.7), height: 1.4)),
-            ])),
-          ]),
-        ),
-      )),
-      const SliverToBoxAdapter(child: SizedBox(height: 12)),
-      SliverToBoxAdapter(child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: SizedBox(width: double.infinity, height: 48,
-            child: ElevatedButton(
-                onPressed: () {},
-                style: ElevatedButton.styleFrom(backgroundColor: OV.slateDark, foregroundColor: Colors.white,
-                    elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-                child: Text('Manage Access', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600)))),
-      )),
+    // Vault Security
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Container(padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(color: OV.slateDark, borderRadius: BorderRadius.circular(20)),
+    child: Row(children: [
+    Container(width: 44, height: 44,
+    decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), shape: BoxShape.circle),
+    child: const Icon(Icons.shield_outlined, color: Colors.white, size: 22)),
+    const SizedBox(width: 14),
+    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text('Vault Security', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
+    Text('Your medical records are encrypted with AES-256.',
+    style: GoogleFonts.inter(fontSize: 12, color: Colors.white.withOpacity(0.7), height: 1.4)),
+    ])),
+    ]),
+    ),
+    )),
+    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+    SliverToBoxAdapter(child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: SizedBox(width: double.infinity, height: 48,
+    child: ElevatedButton(
+    onPressed: () {},
+    style: ElevatedButton.styleFrom(backgroundColor: OV.slateDark, foregroundColor: Colors.white,
+    elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+    child: Text('Manage Access', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600)))),
+    )),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 32)),
+    const SliverToBoxAdapter(child: SizedBox(height: 32)),
     ]));
   }
 
