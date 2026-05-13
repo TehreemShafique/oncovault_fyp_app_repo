@@ -112,6 +112,30 @@ class EhrRepositoryImpl {
     }
     return null;
   }
+  // ── Fetch prescriptions for a patient ────────────────────────────
+  Future<List<Map<String, dynamic>>> fetchPrescriptions(String patientId) async {
+    try {
+      final snap = await _db
+          .collection('prescriptions')
+          .where('patientId', isEqualTo: patientId)
+          .orderBy('issuedAt', descending: true)
+          .get();
+      return snap.docs.map((d) => d.data()).toList();
+    } catch (e) {
+      // Fallback without orderBy
+      final snap = await _db
+          .collection('prescriptions')
+          .where('patientId', isEqualTo: patientId)
+          .get();
+      final list = snap.docs.map((d) => d.data()).toList();
+      list.sort((a, b) {
+        final at = (a['issuedAt'] as Timestamp).toDate();
+        final bt = (b['issuedAt'] as Timestamp).toDate();
+        return bt.compareTo(at);
+      });
+      return list;
+    }
+  }
 
   // ── Archive record ────────────────────────────────────────────
   Future<void> archiveRecord(String recordId) async {

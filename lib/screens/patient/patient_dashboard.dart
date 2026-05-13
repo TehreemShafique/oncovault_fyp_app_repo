@@ -1,6 +1,6 @@
 // lib/screens/patient/patient_dashboard.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -15,7 +15,8 @@ import 'book_appointment_screen.dart';
 import 'appointment_list_screen.dart';
 import 'medical_records_screen.dart';
 import 'notifications_screen.dart';
-
+// ADD this import at the top
+import '../../features/ehr/presentation/pages/ehr_dashboard.dart';
 class PatientDashboard extends StatefulWidget {
   final String patientId;
   final String patientName;
@@ -54,7 +55,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
           ),
           AppointmentListScreen(patientId: widget.patientId, patientName: widget.patientName),
           BookAppointmentScreen(patientId: widget.patientId, patientName: widget.patientName),
-          MedicalRecordsScreen(patientId: widget.patientId),
+          // MedicalRecordsScreen(patientId: widget.patientId),
+          EhrDashboard(patientId: widget.patientId),
         ],
       ),
       bottomNavigationBar: _BottomNav(
@@ -211,13 +213,13 @@ class _DashboardHome extends StatelessWidget {
             child: _NextAppointmentCard(patientId: patientId, patientName: patientName),
           )),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-          // ── Last Report ────────────────────────────────────────
-          SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: _LastReportCard(patientId: patientId),
-          )),
+          // const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          //
+          // // ── Last Report ────────────────────────────────────────
+          // SliverToBoxAdapter(child: Padding(
+          //   padding: const EdgeInsets.symmetric(horizontal: 20),
+          //   child: _LastReportCard(patientId: patientId),
+          // )),
 
           const SliverToBoxAdapter(child: SizedBox(height: 16)),
 
@@ -275,7 +277,7 @@ class _DiagnosisCard extends StatelessWidget {
                 Row(children: [
                   if (startDate != null) ...[
                     _DiagnosisMeta(label: 'START DATE',
-                        value: DateFormat('MMM d, yyyy').format(startDate!)),
+                        value: DateFormat('MMM d, yyyy').format(startDate)),
                     const SizedBox(width: 32),
                   ],
                   if (weeks > 0)
@@ -407,44 +409,44 @@ class _NextAppointmentCard extends StatelessWidget {
   }
 }
 
-// ── Last Report Card ──────────────────────────────────────────────
+//── Last Report Card ──────────────────────────────────────────────
 class _LastReportCard extends StatelessWidget {
-  final String patientId;
-  const _LastReportCard({required this.patientId});
+ final String patientId;
+ const _LastReportCard({required this.patientId});
 
-  @override
-  Widget build(BuildContext context) => _SectionCard(child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(children: [
-        _IconBubble(icon: Icons.bar_chart_rounded, bg: OV.tertiaryContainer),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Last Report', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600, color: OV.onSurface)),
-          Text('Updated 2 days ago', style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
-        ])),
-      ]),
-      const SizedBox(height: 14),
-      Text('Blood Panels', style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
-      const SizedBox(height: 4),
-      Row(children: [
-        Text('• Stable', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
-        const Spacer(),
-        // Mini bar chart visual
-        Row(children: [3,5,4,7,6].map((h) => Container(
-          width: 6, height: h * 4.0, margin: const EdgeInsets.only(left: 2),
-          decoration: BoxDecoration(
-              color: OV.primary.withOpacity(0.3 + h * 0.08),
-              borderRadius: BorderRadius.circular(2)),
-        )).toList()),
-      ]),
-      const SizedBox(height: 12),
-      GestureDetector(
-          onTap: () => Navigator.push(context, _slide(MedicalRecordsScreen(patientId: patientId))),
-          child: Text('Download PDF', style: GoogleFonts.inter(
-              fontSize: 13, fontWeight: FontWeight.w600, color: OV.primary))),
-    ],
-  ));
+ @override
+ Widget build(BuildContext context) => _SectionCard(child: Column(
+   crossAxisAlignment: CrossAxisAlignment.start,
+   children: [
+     Row(children: [
+       _IconBubble(icon: Icons.bar_chart_rounded, bg: OV.tertiaryContainer),
+       const SizedBox(width: 12),
+       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+         Text('Last Report', style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w600, color: OV.onSurface)),
+         Text('Updated 2 days ago', style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
+       ])),
+     ]),
+     const SizedBox(height: 14),
+     Text('Blood Panels', style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
+     const SizedBox(height: 4),
+     Row(children: [
+       Text('• Stable', style: GoogleFonts.manrope(fontSize: 18, fontWeight: FontWeight.w700, color: OV.onSurface)),
+       const Spacer(),
+       // Mini bar chart visual
+       Row(children: [3,5,4,7,6].map((h) => Container(
+         width: 6, height: h * 4.0, margin: const EdgeInsets.only(left: 2),
+         decoration: BoxDecoration(
+             color: OV.primary.withOpacity(0.3 + h * 0.08),
+             borderRadius: BorderRadius.circular(2)),
+       )).toList()),
+     ]),
+     const SizedBox(height: 12),
+     GestureDetector(
+         onTap: () => Navigator.push(context, _slide(MedicalRecordsScreen(patientId: patientId))),
+         child: Text('Download PDF', style: GoogleFonts.inter(
+             fontSize: 13, fontWeight: FontWeight.w600, color: OV.primary))),
+   ],
+ ));
 }
 
 // ── Health Trends Card ────────────────────────────────────────────
@@ -566,7 +568,8 @@ class _BottomNav extends StatelessWidget {
           _NavItem(icon: Icons.grid_view_rounded, label: 'Dashboard', selected: currentIndex == 0, onTap: () => onTap(0)),
           _NavItem(icon: Icons.calendar_month_rounded, label: 'Appointments', selected: currentIndex == 1, onTap: () => onTap(1)),
           _NavItem(icon: Icons.calendar_month_rounded, label: 'Schedule', selected: currentIndex == 2, onTap: () => onTap(2)),
-          _NavItem(icon: Icons.folder_outlined, label: 'Archive', selected: currentIndex == 3, onTap: () => onTap(3)),
+          // _NavItem(icon: Icons.folder_outlined, label: 'Archive', selected: currentIndex == 3, onTap: () => onTap(3)),
+          _NavItem(icon: Icons.medical_information_outlined, label: 'EHR', selected: currentIndex == 3, onTap: () => onTap(3)),
         ],
       ),
     )),

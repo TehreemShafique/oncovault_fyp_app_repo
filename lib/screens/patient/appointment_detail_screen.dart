@@ -64,6 +64,10 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
     String? newSlot;
     DateTime focusedMonth = DateTime.now();
 
+    // Snapshot the current appointment fields before the sheet opens.
+    // These are used to free the old booked slot if needed.
+    final AppointmentModel currentAppt = _appt;
+
     showModalBottomSheet(
         context: context, isScrollControlled: true, backgroundColor: Colors.white,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
@@ -84,8 +88,23 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                     Text('Reschedule Appointment', style: GoogleFonts.manrope(
                         fontSize: 20, fontWeight: FontWeight.w700, color: OV.onSurface)),
                     const SizedBox(height: 6),
-                    Text('Select a new date and time for your consultation.',
+                    Text('Select a new date and time. The doctor will need to re-approve.',
                         style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant)),
+
+                    // ── Info banner ─────────────────────────────────────────
+                    const SizedBox(height: 14),
+                    Container(padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                            color: OV.primaryContainer.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: OV.primary.withOpacity(0.2))),
+                        child: Row(children: [
+                          Icon(Icons.info_outline_rounded, size: 16, color: OV.primary),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text(
+                              'Rescheduling resets approval status. The doctor will review the new time.',
+                              style: GoogleFonts.inter(fontSize: 12, color: OV.primary, height: 1.4))),
+                        ])),
                     const SizedBox(height: 20),
 
                     // Month nav
@@ -153,16 +172,29 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                     SizedBox(width: double.infinity, height: 50,
                         child: ElevatedButton(
                             onPressed: (newDate == null || newSlot == null) ? null : () async {
+                              // Pass old appointment context so the service can
+                              // free the previously booked slot if it was approved.
                               await _service.rescheduleAppointment(
-                                  appointmentId: _appt.id, patientId: widget.patientId,
-                                  newDate: newDate!, newTimeSlot: newSlot!);
+                                appointmentId: currentAppt.id,
+                                patientId:     widget.patientId,
+                                newDate:       newDate!,
+                                newTimeSlot:   newSlot!,
+                                doctorId:      currentAppt.doctorId,
+                                oldDate:       currentAppt.appointmentDate,
+                                oldTimeSlot:   currentAppt.timeSlot,
+                                oldStatus:     currentAppt.status,
+                              );
                               if (!mounted) return;
+                              // UI reflects new pending status immediately.
                               setState(() => _appt = _appt.copyWith(
-                                  status: AppointmentStatus.rescheduled,
-                                  appointmentDate: newDate, timeSlot: newSlot));
+                                  status: AppointmentStatus.pending,
+                                  appointmentDate: newDate,
+                                  timeSlot: newSlot));
                               Navigator.pop(ctx);
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                  content: Text('Appointment rescheduled!', style: GoogleFonts.inter(fontSize: 13)),
+                                  content: Text(
+                                      'Appointment rescheduled. Awaiting doctor approval.',
+                                      style: GoogleFonts.inter(fontSize: 13)),
                                   backgroundColor: OV.tertiary, behavior: SnackBarBehavior.floating,
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
                             },
@@ -256,7 +288,7 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                 ])),
           ],
 
-          // Status info card
+          // Status info cards
           if (a.status == AppointmentStatus.pending) ...[
             const SizedBox(height: 16),
             Container(padding: const EdgeInsets.all(16),
@@ -268,6 +300,21 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                   const SizedBox(width: 10),
                   Expanded(child: Text('Your appointment is awaiting doctor confirmation. You will be notified once approved.',
                       style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF8B5000), height: 1.4))),
+                ])),
+          ],
+
+          // Show pending banner after rescheduling too
+          if (a.status == AppointmentStatus.rescheduled) ...[
+            const SizedBox(height: 16),
+            Container(padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: OV.primaryContainer.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: OV.primary.withOpacity(0.2))),
+                child: Row(children: [
+                  Icon(Icons.schedule_rounded, color: OV.primary, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('Your rescheduled appointment is awaiting doctor re-approval.',
+                      style: GoogleFonts.inter(fontSize: 12, color: OV.primary, height: 1.4))),
                 ])),
           ],
         ]))),

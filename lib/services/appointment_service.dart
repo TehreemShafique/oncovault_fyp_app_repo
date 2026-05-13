@@ -7,15 +7,45 @@ class AppointmentService {
   final _db = FirebaseFirestore.instance;
 
   // ── Collections ───────────────────────────────────────────────
-  // /appointments/{id}         — all appointments (doctor module reads this)
-  // /patients/{uid}/appointments/{id}  — subcollection for fast patient queries
+  // /appointments/{id}                        — all appointments (doctor module reads this)
+  // /patients/{uid}/appointments/{id}         — subcollection for fast patient queries
   // /notifications/{patientId}/items/{id}
+  // /bookedSlots/{doctorId}/slots/{slotKey}   — approved/booked slots per doctor
+  //   slotKey format: "yyyy-MM-dd_HH:mm AM/PM"  e.g. "2025-06-15_09:30 AM"
 
   CollectionReference get _appointments => _db.collection('appointments');
   CollectionReference _patientAppts(String uid) =>
       _db.collection('patients').doc(uid).collection('appointments');
   CollectionReference _notifications(String uid) =>
       _db.collection('notifications').doc(uid).collection('items');
+
+  // bookedSlots/{doctorId}/slots/{slotKey}
+  CollectionReference _bookedSlots(String doctorId) =>
+      _db.collection('bookedSlots').doc(doctorId).collection('slots');
+
+  // ── Slot Key Helper ───────────────────────────────────────────
+  // Produces a deterministic key from a date + time slot string.
+  // e.g. date=2025-06-15, slot="09:30 AM"  →  "2025-06-15_09:30 AM"
+  String _slotKey(DateTime date, String timeSlot) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '${y}-${m}-${d}_$timeSlot';
+  }
+
+  // ── Check if a slot is booked ─────────────────────────────────
+  /// Returns true when the slot is already taken (approved appointment exists).
+  Future<bool> isSlotBooked(String doctorId, DateTime date, String timeSlot) async {
+    final key = _slotKey(date, timeSlot);
+    final doc = await _bookedSlots(doctorId).doc(key).get();
+    return doc.exists;
+  }
+
+  /// Stream of all booked slot keys for a doctor so the UI can react in real-time.
+  Stream<Set<String>> watchBookedSlots(String doctorId) =>
+      _bookedSlots(doctorId).snapshots().map(
+            (s) => s.docs.map((d) => d.id).toSet(),
+      );
 
   // ── Book Appointment ──────────────────────────────────────────
   Future<AppointmentModel> bookAppointment({
@@ -66,6 +96,13 @@ class AppointmentService {
 
   // ── Cancel Appointment ────────────────────────────────────────
   Future<void> cancelAppointment(String appointmentId, String patientId) async {
+    // Fetch the appointment so we can free its slot if it was approved.
+    final apptDoc = await _appointments.doc(appointmentId).get();
+    AppointmentModel? appt;
+    if (apptDoc.exists) {
+      appt = AppointmentModel.fromMap(apptDoc.data() as Map<String, dynamic>);
+    }
+
     final data = {
       'status':    AppointmentStatus.cancelled.firestoreValue,
       'updatedAt': Timestamp.now(),
@@ -73,6 +110,13 @@ class AppointmentService {
     final batch = _db.batch();
     batch.update(_appointments.doc(appointmentId), data);
     batch.update(_patientAppts(patientId).doc(appointmentId), data);
+
+    // Free the booked slot if it was previously approved.
+    if (appt != null && appt.status == AppointmentStatus.approved && appt.doctorId.isNotEmpty) {
+      final key = _slotKey(appt.appointmentDate, appt.timeSlot);
+      batch.delete(_bookedSlots(appt.doctorId).doc(key));
+    }
+
     await batch.commit();
 
     await _createNotification(
@@ -84,28 +128,47 @@ class AppointmentService {
     );
   }
 
-  // ── Reschedule Appointment ────────────────────────────────────
+  // ── Reschedule Appointment (by Patient) ───────────────────────
+  // FEATURE: Status is reset to PENDING so the doctor must re-approve.
+  // If the old appointment was already approved, its booked slot is freed.
   Future<void> rescheduleAppointment({
     required String appointmentId,
     required String patientId,
     required DateTime newDate,
     required String newTimeSlot,
+    // Pass these so we can free the old slot when it was approved.
+    String doctorId = '',
+    DateTime? oldDate,
+    String oldTimeSlot = '',
+    AppointmentStatus oldStatus = AppointmentStatus.pending,
   }) async {
     final data = {
       'appointmentDate': Timestamp.fromDate(newDate),
       'timeSlot':        newTimeSlot,
-      'status':          AppointmentStatus.rescheduled.firestoreValue,
+      // Reset to PENDING — doctor must re-approve the new date/time.
+      'status':          AppointmentStatus.pending.firestoreValue,
       'updatedAt':       Timestamp.now(),
     };
+
     final batch = _db.batch();
     batch.update(_appointments.doc(appointmentId), data);
     batch.update(_patientAppts(patientId).doc(appointmentId), data);
+
+    // If the appointment was approved, release the old booked slot.
+    if (oldStatus == AppointmentStatus.approved &&
+        doctorId.isNotEmpty &&
+        oldDate != null &&
+        oldTimeSlot.isNotEmpty) {
+      final oldKey = _slotKey(oldDate, oldTimeSlot);
+      batch.delete(_bookedSlots(doctorId).doc(oldKey));
+    }
+
     await batch.commit();
 
     await _createNotification(
       patientId:   patientId,
-      title:       'Appointment Rescheduled',
-      body:        'Your appointment has been rescheduled to ${_fmtDate(newDate)} at $newTimeSlot. Awaiting doctor confirmation.',
+      title:       'Appointment Rescheduled — Awaiting Approval',
+      body:        'Your appointment has been rescheduled to ${_fmtDate(newDate)} at $newTimeSlot. The doctor must approve the new time.',
       type:        'appointment',
       referenceId: appointmentId,
     );

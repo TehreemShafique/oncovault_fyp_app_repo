@@ -68,8 +68,7 @@ class _AppointmentListScreenState extends State<AppointmentListScreen>
               return const Center(child: CircularProgressIndicator(color: OV.primary));
             }
             final all = snap.data ?? [];
-            final now = DateTime.now();
-            // Upcoming: status-based (not date-based) so pending stays visible
+            // Upcoming: status-based so pending stays visible
             final upcoming = all.where((a) =>
             a.status == AppointmentStatus.pending ||
                 a.status == AppointmentStatus.approved ||
@@ -182,13 +181,13 @@ class _AppointmentCard extends StatelessWidget {
             if (!isPast && a.status != AppointmentStatus.cancelled && a.status != AppointmentStatus.rejected) ...[
               const SizedBox(height: 14),
               Row(children: [
-                // Cancel button
+                // Cancel — passes full appointment so service can free the slot.
                 Expanded(child: _CancelButton(
                     appointment: a,
                     patientId: patientId,
                     service: service)),
                 const SizedBox(width: 10),
-                // Reschedule button
+                // Reschedule — opens detail screen with bottom sheet pre-opened.
                 Expanded(flex: 2, child: GestureDetector(
                     onTap: () => Navigator.push(context, _slide(AppointmentDetailScreen(
                         appointment: a, patientId: patientId, patientName: patientName,
@@ -239,6 +238,7 @@ class _CancelButtonState extends State<_CancelButton> {
             ]));
     if (confirm != true || !mounted) return;
     setState(() => _cancelling = true);
+    // cancelAppointment now also handles freeing the booked slot if needed.
     await widget.service.cancelAppointment(widget.appointment.id, widget.patientId);
     if (mounted) setState(() => _cancelling = false);
   }

@@ -25,8 +25,21 @@ class DoctorService {
   CollectionReference _patientAppts(String patientId) =>
       _db.collection('patients').doc(patientId).collection('appointments');
 
+  // ── Booked Slots ──────────────────────────────────────────────
+  // /bookedSlots/{doctorId}/slots/{slotKey}
+  // slotKey format: "yyyy-MM-dd_HH:mm AM/PM"  e.g. "2025-06-15_09:30 AM"
+  // Written on approve, deleted on complete / cancel / reschedule.
+  CollectionReference _bookedSlots(String doctorId) =>
+      _db.collection('bookedSlots').doc(doctorId).collection('slots');
+
+  String _slotKey(DateTime date, String timeSlot) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '${y}-${m}-${d}_$timeSlot';
+  }
+
   // ── Doctor Profile ────────────────────────────────────────────
-  // Kept friend's improved version with try/catch + auto-save
   Future<DoctorModel?> fetchDoctor(String uid) async {
     try {
       final doc = await _doctors.doc(uid).get();
@@ -61,9 +74,7 @@ class DoctorService {
   }
 
   // ── Appointments ──────────────────────────────────────────────
-  // Kept friend's improved version with client-side sort
-  Stream<List<AppointmentModel>> watchDoctorAppointments(
-      String doctorId) =>
+  Stream<List<AppointmentModel>> watchDoctorAppointments(String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
           .snapshots()
@@ -77,8 +88,7 @@ class DoctorService {
         return list;
       });
 
-  Stream<List<AppointmentModel>> watchPendingAppointments(
-      String doctorId) =>
+  Stream<List<AppointmentModel>> watchPendingAppointments(String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
           .where('status',   isEqualTo: 'pending')
@@ -92,6 +102,11 @@ class DoctorService {
         return list;
       });
 
+  // ── FEATURE 1: Approve → write bookedSlot ────────────────────
+  // When the doctor approves, the slot is atomically written to
+  // /bookedSlots/{doctorId}/slots/{slotKey} in the same batch.
+  // The patient booking screen streams this collection and shows
+  // "Not Available" for any key that exists there.
   Future<void> approveAppointment(AppointmentModel appt) async {
     final data = {
       'status'   : AppointmentStatus.approved.firestoreValue,
@@ -100,7 +115,20 @@ class DoctorService {
     final batch = _db.batch();
     batch.update(_appointments.doc(appt.id), data);
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
+
+    // Mark this slot as booked so no other patient can select it.
+    final slotKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+    batch.set(_bookedSlots(appt.doctorId).doc(slotKey), {
+      'appointmentId': appt.id,
+      'patientId'    : appt.patientId,
+      'patientName'  : appt.patientName,
+      'date'         : Timestamp.fromDate(appt.appointmentDate),
+      'timeSlot'     : appt.timeSlot,
+      'bookedAt'     : Timestamp.now(),
+    });
+
     await batch.commit();
+
     await _sendPatientNotification(
       patientId  : appt.patientId,
       title      : 'Appointment Approved ✓',
@@ -123,17 +151,22 @@ class DoctorService {
     batch.update(_appointments.doc(appt.id), data);
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
     await batch.commit();
+
     await _sendPatientNotification(
-      patientId: appt.patientId,
-      title    : 'Appointment Not Available',
-      body     : 'Your appointment for ${_fmt(appt.appointmentDate)} '
+      patientId  : appt.patientId,
+      title      : 'Appointment Not Available',
+      body       : 'Your appointment for ${_fmt(appt.appointmentDate)} '
           'could not be accommodated.'
           '${reason.isNotEmpty ? ' Reason: $reason' : ''}',
-      type     : 'appointment',
+      type       : 'appointment',
       referenceId: appt.id,
     );
   }
 
+  // ── FEATURE 2: Doctor reschedule → free old slot + reset pending ──
+  // Deletes the old booked slot (so it becomes free for other patients)
+  // and resets the appointment status to PENDING so it re-enters the
+  // approval queue and the patient is notified of the new time.
   Future<void> doctorReschedule({
     required AppointmentModel appt,
     required DateTime newDate,
@@ -142,23 +175,35 @@ class DoctorService {
     final data = {
       'appointmentDate': Timestamp.fromDate(newDate),
       'timeSlot'       : newSlot,
-      'status'         : AppointmentStatus.rescheduled.firestoreValue,
+      // Reset to pending — the new time needs re-confirmation.
+      'status'         : AppointmentStatus.pending.firestoreValue,
       'updatedAt'      : Timestamp.now(),
     };
     final batch = _db.batch();
     batch.update(_appointments.doc(appt.id), data);
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
+
+    // Free the old slot if the appointment was previously approved.
+    if (appt.status == AppointmentStatus.approved) {
+      final oldKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+      batch.delete(_bookedSlots(appt.doctorId).doc(oldKey));
+    }
+
     await batch.commit();
+
     await _sendPatientNotification(
-      patientId: appt.patientId,
-      title    : 'Appointment Rescheduled',
-      body     : 'Your appointment has been moved to '
-          '${_fmt(newDate)} at $newSlot.',
-      type     : 'appointment',
+      patientId  : appt.patientId,
+      title      : 'Appointment Rescheduled by Doctor',
+      body       : 'Your appointment has been moved to '
+          '${_fmt(newDate)} at $newSlot. '
+          'It is now pending re-confirmation.',
+      type       : 'appointment',
       referenceId: appt.id,
     );
   }
 
+  // ── Mark Complete → free the booked slot ─────────────────────
+  // Appointment is finished — release the slot so it's available again.
   Future<void> markAppointmentComplete(AppointmentModel appt) async {
     final data = {
       'status'   : AppointmentStatus.completed.firestoreValue,
@@ -167,6 +212,11 @@ class DoctorService {
     final batch = _db.batch();
     batch.update(_appointments.doc(appt.id), data);
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
+
+    // Release the slot — appointment is over, no longer blocked.
+    final slotKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+    batch.delete(_bookedSlots(appt.doctorId).doc(slotKey));
+
     await batch.commit();
   }
 
@@ -174,48 +224,6 @@ class DoctorService {
   // PATIENTS — SRS compliant: only assigned + consented patients
   // FR-M8.1: Only patients with active authorization appear
   // ════════════════════════════════════════════════════════════════
-  // Stream<List<PatientProfile>> watchDoctorPatients(String doctorId) {
-  //   return _consents
-  //       .where('doctorId', isEqualTo: doctorId)
-  //       .where('status',   isEqualTo: 'granted')
-  //       .snapshots()
-  //       .asyncMap((snap) async {
-  //     final consentedIds = snap.docs
-  //         .map((d) => (d.data() as Map)['patientId'] as String)
-  //         .toSet();
-  //
-  //     final apptSnap = await _appointments
-  //         .where('doctorId', isEqualTo: doctorId)
-  //         .get();
-  //     final apptIds = apptSnap.docs
-  //         .map((d) => (d.data() as Map)['patientId'] as String)
-  //         .toSet();
-  //
-  //     final allIds = {...consentedIds, ...apptIds};
-  //
-  //     final profiles = <PatientProfile>[];
-  //     for (final pid in allIds) {
-  //       final doc = await _patients.doc(pid).get();
-  //       if (doc.exists) {
-  //         profiles.add(PatientProfile.fromMap(
-  //             doc.data() as Map<String, dynamic>));
-  //       } else {
-  //         final uDoc = await _users.doc(pid).get();
-  //         if (uDoc.exists) {
-  //           final d = uDoc.data() as Map<String, dynamic>;
-  //           profiles.add(PatientProfile(
-  //             uid      : pid,
-  //             name     : d['name']      ?? '',
-  //             email    : d['email']     ?? '',
-  //             medicalId: d['medicalId'] ?? '',
-  //           ));
-  //         }
-  //       }
-  //     }
-  //     return profiles;
-  //   });
-  // }
-  // REPLACE watchDoctorPatients with this:
   Stream<List<PatientProfile>> watchDoctorPatients(String doctorId) {
     return _consents
         .where('doctorId', isEqualTo: doctorId)
@@ -262,8 +270,7 @@ class DoctorService {
   Future<PatientProfile?> fetchPatient(String patientId) async {
     final doc = await _patients.doc(patientId).get();
     if (doc.exists) {
-      return PatientProfile.fromMap(
-          doc.data() as Map<String, dynamic>);
+      return PatientProfile.fromMap(doc.data() as Map<String, dynamic>);
     }
     final uDoc = await _users.doc(patientId).get();
     if (!uDoc.exists) return null;
@@ -277,23 +284,6 @@ class DoctorService {
   }
 
   // ── Consent Management (FR-M2.2, FR-M8.2) ────────────────────
-  // Future<bool> hasConsent(String doctorId, String patientId) async {
-  //   final consentSnap = await _consents
-  //       .where('doctorId',  isEqualTo: doctorId)
-  //       .where('patientId', isEqualTo: patientId)
-  //       .where('status',    isEqualTo: 'granted')
-  //       .limit(1)
-  //       .get();
-  //   if (consentSnap.docs.isNotEmpty) return true;
-  //
-  //   final apptSnap = await _appointments
-  //       .where('doctorId',  isEqualTo: doctorId)
-  //       .where('patientId', isEqualTo: patientId)
-  //       .limit(1)
-  //       .get();
-  //   return apptSnap.docs.isNotEmpty;
-  // }
-  // REPLACE hasConsent with this:
   Future<bool> hasConsent(String doctorId, String patientId) async {
     // Single field query — no composite index needed
     final consentSnap = await _consents
@@ -390,8 +380,7 @@ class DoctorService {
     );
   }
 
-  Stream<List<DiagnosisEntry>> watchPatientDiagnoses(
-      String patientId) =>
+  Stream<List<DiagnosisEntry>> watchPatientDiagnoses(String patientId) =>
       _patientDiagnoses(patientId)
           .orderBy('createdAt', descending: true)
           .snapshots()
@@ -400,8 +389,7 @@ class DoctorService {
           d.data() as Map<String, dynamic>))
           .toList());
 
-  Stream<List<DiagnosisEntry>> watchDoctorDiagnoses(
-      String doctorId) =>
+  Stream<List<DiagnosisEntry>> watchDoctorDiagnoses(String doctorId) =>
       _diagnoses(doctorId)
           .orderBy('createdAt', descending: true)
           .limit(20)
@@ -448,8 +436,7 @@ class DoctorService {
   }
 
   // ── Doctor Notifications ──────────────────────────────────────
-  Stream<List<NotificationModel>> watchDoctorNotifications(
-      String doctorId) =>
+  Stream<List<NotificationModel>> watchDoctorNotifications(String doctorId) =>
       _notifications(doctorId)
           .orderBy('createdAt', descending: true)
           .limit(50)
@@ -459,8 +446,7 @@ class DoctorService {
           d.data() as Map<String, dynamic>))
           .toList());
 
-  Future<void> markDoctorNotifRead(
-      String doctorId, String notifId) async {
+  Future<void> markDoctorNotifRead(String doctorId, String notifId) async {
     await _notifications(doctorId)
         .doc(notifId).update({'isRead': true});
   }
@@ -506,8 +492,7 @@ class DoctorService {
   }
 
   // ── Patient Medical Records ───────────────────────────────────
-  Stream<List<MedicalRecordModel>> watchPatientRecords(
-      String patientId) =>
+  Stream<List<MedicalRecordModel>> watchPatientRecords(String patientId) =>
       _db.collection('patients').doc(patientId)
           .collection('medicalRecords')
           .orderBy('date', descending: true)
@@ -528,8 +513,7 @@ class DoctorService {
     );
   }
 
-  Future<Map<String, dynamic>> fetchEhrVitals(
-      String patientId) async {
+  Future<Map<String, dynamic>> fetchEhrVitals(String patientId) async {
     final doc = await _db
         .collection('ehr_vitals').doc(patientId).get();
     if (!doc.exists) return {};
