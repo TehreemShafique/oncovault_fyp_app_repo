@@ -174,13 +174,56 @@ class DoctorService {
   // PATIENTS — SRS compliant: only assigned + consented patients
   // FR-M8.1: Only patients with active authorization appear
   // ════════════════════════════════════════════════════════════════
+  // Stream<List<PatientProfile>> watchDoctorPatients(String doctorId) {
+  //   return _consents
+  //       .where('doctorId', isEqualTo: doctorId)
+  //       .where('status',   isEqualTo: 'granted')
+  //       .snapshots()
+  //       .asyncMap((snap) async {
+  //     final consentedIds = snap.docs
+  //         .map((d) => (d.data() as Map)['patientId'] as String)
+  //         .toSet();
+  //
+  //     final apptSnap = await _appointments
+  //         .where('doctorId', isEqualTo: doctorId)
+  //         .get();
+  //     final apptIds = apptSnap.docs
+  //         .map((d) => (d.data() as Map)['patientId'] as String)
+  //         .toSet();
+  //
+  //     final allIds = {...consentedIds, ...apptIds};
+  //
+  //     final profiles = <PatientProfile>[];
+  //     for (final pid in allIds) {
+  //       final doc = await _patients.doc(pid).get();
+  //       if (doc.exists) {
+  //         profiles.add(PatientProfile.fromMap(
+  //             doc.data() as Map<String, dynamic>));
+  //       } else {
+  //         final uDoc = await _users.doc(pid).get();
+  //         if (uDoc.exists) {
+  //           final d = uDoc.data() as Map<String, dynamic>;
+  //           profiles.add(PatientProfile(
+  //             uid      : pid,
+  //             name     : d['name']      ?? '',
+  //             email    : d['email']     ?? '',
+  //             medicalId: d['medicalId'] ?? '',
+  //           ));
+  //         }
+  //       }
+  //     }
+  //     return profiles;
+  //   });
+  // }
+  // REPLACE watchDoctorPatients with this:
   Stream<List<PatientProfile>> watchDoctorPatients(String doctorId) {
     return _consents
         .where('doctorId', isEqualTo: doctorId)
-        .where('status',   isEqualTo: 'granted')
         .snapshots()
         .asyncMap((snap) async {
+      // Filter 'granted' in Dart — no composite index needed
       final consentedIds = snap.docs
+          .where((d) => (d.data() as Map)['status'] == 'granted')
           .map((d) => (d.data() as Map)['patientId'] as String)
           .toSet();
 
@@ -234,14 +277,36 @@ class DoctorService {
   }
 
   // ── Consent Management (FR-M2.2, FR-M8.2) ────────────────────
+  // Future<bool> hasConsent(String doctorId, String patientId) async {
+  //   final consentSnap = await _consents
+  //       .where('doctorId',  isEqualTo: doctorId)
+  //       .where('patientId', isEqualTo: patientId)
+  //       .where('status',    isEqualTo: 'granted')
+  //       .limit(1)
+  //       .get();
+  //   if (consentSnap.docs.isNotEmpty) return true;
+  //
+  //   final apptSnap = await _appointments
+  //       .where('doctorId',  isEqualTo: doctorId)
+  //       .where('patientId', isEqualTo: patientId)
+  //       .limit(1)
+  //       .get();
+  //   return apptSnap.docs.isNotEmpty;
+  // }
+  // REPLACE hasConsent with this:
   Future<bool> hasConsent(String doctorId, String patientId) async {
+    // Single field query — no composite index needed
     final consentSnap = await _consents
-        .where('doctorId',  isEqualTo: doctorId)
-        .where('patientId', isEqualTo: patientId)
-        .where('status',    isEqualTo: 'granted')
-        .limit(1)
+        .where('doctorId', isEqualTo: doctorId)
         .get();
-    if (consentSnap.docs.isNotEmpty) return true;
+
+    // Filter in Dart
+    final hasGrant = consentSnap.docs.any((d) {
+      final data = d.data() as Map;
+      return data['patientId'] == patientId &&
+          data['status']    == 'granted';
+    });
+    if (hasGrant) return true;
 
     final apptSnap = await _appointments
         .where('doctorId',  isEqualTo: doctorId)
