@@ -197,15 +197,13 @@ class _EhrDashboardState extends State<EhrDashboard> {
     }
 
     return SafeArea(child: CustomScrollView(slivers: [
-
       SliverToBoxAdapter(child: _buildAppBar()),
-      SliverToBoxAdapter(child: _buildRoleBanner()),
 
       // ── SECTION 1: Patient Biodata ────────────────────────────
       if (_profile != null)
         SliverToBoxAdapter(child: _buildBiodataCard()),
 
-      // ── SECTION 2: Blockchain Consent (patient only) ──────────
+      // ── SECTION 2: Consent (patient only) ──────────
       if (!_isDoctor)
         SliverToBoxAdapter(child: _buildConsentCard()),
 
@@ -214,9 +212,9 @@ class _EhrDashboardState extends State<EhrDashboard> {
 
       // ── SECTION 4: Voice Input Placeholder ───────────────────
       if (_isDoctor)
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child  : const VoiceInputPlaceholder(),
+        SliverToBoxAdapter(child: const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child  : VoiceInputPlaceholder(),
         )),
 
       // ── SECTION 5: CBC Report Upload + Records ────────────────
@@ -253,74 +251,9 @@ class _EhrDashboardState extends State<EhrDashboard> {
               Text('Electronic Health Record',
                   style: GoogleFonts.manrope(fontSize: 15,
                       fontWeight: FontWeight.w700, color: OV.onSurface)),
-              Text('Blockchain-secured patient data',
-                  style: GoogleFonts.inter(
-                      fontSize: 11, color: OV.outline)),
             ]),
-            _isDoctor && _hasConsent
-                ? GestureDetector(
-                onTap: _uploading ? null : _uploadReport,
-                child: Container(
-                  padding   : const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: OV.primary,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: _uploading
-                      ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2))
-                      : const Icon(Icons.upload_rounded,
-                      size: 16, color: Colors.white),
-                ))
-                : Container(
-                padding   : const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: OV.surfaceLow,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: OV.outlineVariant.withOpacity(0.5))),
-                child: Icon(
-                    _isDoctor
-                        ? Icons.lock_outline_rounded
-                        : Icons.lock_outline_rounded,
-                    size: 16, color: OV.outline)),
+            const SizedBox(width: 34),
           ]),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // ROLE BANNER
-  // ─────────────────────────────────────────────────────────────
-  Widget _buildRoleBanner() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: Container(
-        padding   : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color       : _isDoctor ? OV.primaryContainer : OV.surfaceLow,
-          borderRadius: BorderRadius.circular(12),
-          border      : Border.all(
-              color: _isDoctor
-                  ? OV.primary.withOpacity(0.3)
-                  : OV.outlineVariant.withOpacity(0.4)),
-        ),
-        child: Row(children: [
-          Icon(
-            _isDoctor
-                ? Icons.edit_note_rounded
-                : Icons.visibility_outlined,
-            size : 16,
-            color: _isDoctor ? OV.primary : OV.outline,
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(
-            _isDoctor
-                ? 'Doctor View — Full EHR access granted by patient'
-                : 'Patient View — Read only. Use Share Access to grant doctor access.',
-            style: GoogleFonts.inter(fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color     : _isDoctor ? OV.primary : OV.outline),
-          )),
-        ]),
-      ),
     );
   }
 
@@ -332,8 +265,6 @@ class _EhrDashboardState extends State<EhrDashboard> {
     return _Section(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
-        // Header row
         Row(children: [
           Container(width: 56, height: 56,
               decoration: BoxDecoration(
@@ -361,21 +292,6 @@ class _EhrDashboardState extends State<EhrDashboard> {
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.5, color: OV.primary))),
           ])),
-          // Blockchain badge
-          Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                  color       : OV.slateDark,
-                  borderRadius: BorderRadius.circular(8)),
-              child: Row(children: [
-                const Icon(Icons.shield_rounded,
-                    size: 10, color: Colors.white),
-                const SizedBox(width: 4),
-                Text('Secured', style: GoogleFonts.inter(
-                    fontSize: 9, fontWeight: FontWeight.w700,
-                    color   : Colors.white)),
-              ])),
         ]),
 
         const SizedBox(height: 16),
@@ -449,7 +365,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // SECTION 2: BLOCKCHAIN CONSENT (patient only)
+  // SECTION 2: ACCESS CONTROL CARD
   // ─────────────────────────────────────────────────────────────
   Widget _buildConsentCard() {
     return _Section(
@@ -463,8 +379,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
               color: OV.onSurface)),
         ]),
         const SizedBox(height: 8),
-        Text('Control which doctors can access your EHR. '
-            'Blockchain consent is simulated for demo.',
+        Text('Control which doctors can access your EHR. Secure consent management is simulated for demo.',
             style: GoogleFonts.inter(
                 fontSize: 12, color: OV.outline, height: 1.4)),
         const SizedBox(height: 12),
@@ -502,13 +417,11 @@ class _EhrDashboardState extends State<EhrDashboard> {
           const SizedBox(height: 20),
           Icon(Icons.shield_outlined, size: 48, color: OV.primary),
           const SizedBox(height: 12),
-          Text('Blockchain Consent', style: GoogleFonts.manrope(
+          Text('Manage Consent', style: GoogleFonts.manrope(
               fontSize: 18, fontWeight: FontWeight.w700,
               color: OV.onSurface)),
           const SizedBox(height: 8),
-          Text('Enter your doctor\'s Medical ID to grant them '
-              'access to your EHR records. This simulates '
-              'blockchain-based consent management.',
+          Text('Enter your doctor\'s Medical ID to grant them access to your EHR records.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                   fontSize: 13, color: OV.outline, height: 1.5)),
@@ -523,8 +436,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
                     size: 16, color: OV.primary),
                 const SizedBox(width: 8),
                 Expanded(child: Text(
-                    'In production, this will use blockchain '
-                        'smart contracts for immutable consent records.',
+                    'Immutable system logs track permission states to maintain a transparent audit trail.',
                     style: GoogleFonts.inter(fontSize: 11,
                         color: OV.primary, height: 1.4))),
               ])),
@@ -698,49 +610,155 @@ class _EhrDashboardState extends State<EhrDashboard> {
                       fontSize: 13, color: OV.outline)),
             ]),
       ),
-      if (_isDoctor && _hasConsent)
+      // if (_isDoctor && _hasConsent)
+      //   Padding(
+      //     padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      //     child  : GestureDetector(
+      //       onTap: _uploading ? null : _uploadReport,
+      //       child: Container(
+      //         padding   : const EdgeInsets.all(16),
+      //         decoration: BoxDecoration(
+      //             color       : Colors.white,
+      //             borderRadius: BorderRadius.circular(16),
+      //             border      : Border.all(
+      //                 color: OV.primary.withOpacity(0.3),
+      //                 width: 1.5,
+      //                 style: BorderStyle.solid),
+      //             boxShadow   : [BoxShadow(
+      //                 color     : OV.primary.withOpacity(0.06),
+      //                 blurRadius: 8,
+      //                 offset    : const Offset(0, 2))]),
+      //         child: Row(children: [
+      //           Container(width: 44, height: 44,
+      //               decoration: BoxDecoration(
+      //                   color : OV.primaryContainer,
+      //                   shape : BoxShape.circle),
+      //               child: const Icon(Icons.upload_file_rounded,
+      //                   color: OV.primary, size: 20)),
+      //           const SizedBox(width: 14),
+      //           Expanded(child: Column(
+      //               crossAxisAlignment: CrossAxisAlignment.start,
+      //               children: [
+      //                 Text('Upload CBC Report',
+      //                     style: GoogleFonts.manrope(fontSize: 14,
+      //                         fontWeight: FontWeight.w700,
+      //                         color     : OV.onSurface)),
+      //                 Text('PDF or Image — hash generated automatically',
+      //                     style: GoogleFonts.inter(
+      //                         fontSize: 12, color: OV.outline)),
+      //               ])),
+      //           const Icon(Icons.arrow_forward_ios_rounded,
+      //               size: 14, color: OV.primary),
+      //         ]),
+      //       ),
+      //     ),
+      //   ),
+
+      if (_isDoctor)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child  : GestureDetector(
-            onTap: _uploading ? null : _uploadReport,
-            child: Container(
-              padding   : const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                  color       : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border      : Border.all(
-                      color: OV.primary.withOpacity(0.3),
-                      width: 1.5,
-                      style: BorderStyle.solid),
-                  boxShadow   : [BoxShadow(
-                      color     : OV.primary.withOpacity(0.06),
-                      blurRadius: 8,
-                      offset    : const Offset(0, 2))]),
-              child: Row(children: [
-                Container(width: 44, height: 44,
-                    decoration: BoxDecoration(
-                        color : OV.primaryContainer,
-                        shape : BoxShape.circle),
-                    child: const Icon(Icons.upload_file_rounded,
-                        color: OV.primary, size: 20)),
-                const SizedBox(width: 14),
-                Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Upload CBC Report',
-                          style: GoogleFonts.manrope(fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color     : OV.onSurface)),
-                      Text('PDF or Image — hash generated automatically',
-                          style: GoogleFonts.inter(
-                              fontSize: 12, color: OV.outline)),
-                    ])),
-                Icon(Icons.arrow_forward_ios_rounded,
-                    size: 14, color: OV.primary),
-              ]),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.science_rounded,
+                        color: OV.primary, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'CBC Analysis',
+                      style: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: OV.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _cbcField('WBC'),
+                    _cbcField('RBC'),
+                    _cbcField('HGB'),
+                    _cbcField('HCT'),
+                    _cbcField('MCV'),
+                    _cbcField('MCH'),
+                    _cbcField('MCHC'),
+                    _cbcField('PLT'),
+                    _cbcField('Neutrophils'),
+                    _cbcField('Lymphocytes'),
+                  ],
+                ),
+                // const SizedBox(height: 16),
+                // Container(
+                //   width: double.infinity,
+                //   padding: const EdgeInsets.all(14),
+                //   decoration: BoxDecoration(
+                //     color: OV.primaryContainer.withOpacity(0.5),
+                //     borderRadius: BorderRadius.circular(14),
+                //   ),
+                //   child: Row(
+                //     children: [
+                //       const Icon(Icons.mic_rounded,
+                //           color: OV.primary, size: 18),
+                //       const SizedBox(width: 10),
+                //       Expanded(
+                //         child: Text(
+                //           'Voice-to-text CBC entry module',
+                //           style: GoogleFonts.inter(
+                //             fontSize: 12,
+                //             fontWeight: FontWeight.w600,
+                //             color: OV.primary,
+                //           ),
+                //         ),
+                //       ),
+                //     ],
+                //   ),
+                // ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: OV.slateDark,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: Text(
+                      'Save CBC Data',
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
+
       _records.isEmpty
           ? _EmptyRecords(isDoctor: _isDoctor)
           : Column(
@@ -772,7 +790,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(children: [
-                  Icon(Icons.auto_awesome_rounded,
+                  const Icon(Icons.auto_awesome_rounded,
                       size: 16, color: OV.primary),
                   const SizedBox(width: 6),
                   Text('AI Diagnostic Engine',
@@ -793,9 +811,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
                             color   : Colors.white))),
               ]),
           const SizedBox(height: 10),
-          Text('Upload a CBC report above and the AI model will '
-              'automatically analyze blood values, detect cancer '
-              'indicators, and provide diagnostic predictions.',
+          Text('Upload a CBC report above and the AI model will automatically analyze blood values, detect cancer indicators, and provide diagnostic predictions.',
               style: GoogleFonts.inter(fontSize: 12,
                   color: OV.onSurfaceVariant, height: 1.5)),
           const SizedBox(height: 14),
@@ -868,9 +884,7 @@ class _NoConsentView extends StatelessWidget {
                 color: OV.onSurface)),
             const SizedBox(height: 10),
             Text(
-              '$patientName has not granted you access to their EHR.\n\n'
-                  'Per SRS FR-M2.2 and FR-M8.2, blockchain consent '
-                  'verification is required before accessing patient records.',
+              '$patientName has not granted you access to their EHR.\n\nConsent verification is required before accessing patient records.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(fontSize: 13,
                   color: OV.outline, height: 1.6),
@@ -886,8 +900,7 @@ class _NoConsentView extends StatelessWidget {
                       size: 16, color: OV.primary),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
-                      'Ask the patient to tap "Share Access with Doctor" '
-                          'in their EHR and enter your Medical ID.',
+                      'Ask the patient to tap "Share Access with Doctor" in their EHR and enter your Medical ID.',
                       style: GoogleFonts.inter(fontSize: 12,
                           color: OV.primary, height: 1.4))),
                 ])),
@@ -999,12 +1012,15 @@ class _VitalsGrid extends StatelessWidget {
     ];
 
     return GridView.count(
-      crossAxisCount : 3,
+      crossAxisCount : 2,
       shrinkWrap     : true,
       physics        : const NeverScrollableScrollPhysics(),
-      crossAxisSpacing: 10,
-      mainAxisSpacing : 10,
-      childAspectRatio: 1.2,
+      // crossAxisSpacing: 10,
+      // mainAxisSpacing : 10,
+      // childAspectRatio: 1.55,
+      childAspectRatio: 1.85,
+      crossAxisSpacing: 6,
+      mainAxisSpacing: 6,
       children       : items.map((item) => _VitalTile(item: item)).toList(),
     );
   }
@@ -1025,35 +1041,81 @@ class _VitalTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasValue = item.value != null &&
-        item.value.toString().isNotEmpty;
+    final hasValue = item.value != null && item.value.toString().isNotEmpty;
+
     return Container(
-      padding   : const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-          color       : hasValue ? OV.primaryContainer : OV.surfaceLow,
-          borderRadius: BorderRadius.circular(12),
-          border      : Border.all(
-              color: hasValue
-                  ? OV.primary.withOpacity(0.2)
-                  : OV.outlineVariant.withOpacity(0.3))),
-      child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(item.icon, size: 18,
-                color: hasValue ? OV.primary : OV.outlineVariant),
-            const SizedBox(height: 4),
-            Text(
-              hasValue ? '${item.value} ${item.unit}' : '—',
-              style: GoogleFonts.manrope(
-                  fontSize  : 11,
-                  fontWeight: FontWeight.w700,
-                  color     : hasValue ? OV.onSurface : OV.outlineVariant),
-              textAlign: TextAlign.center,
+        gradient: LinearGradient(
+          colors: hasValue
+              ? [
+            OV.primaryContainer.withOpacity(0.8),
+            Colors.white,
+          ]
+              : [
+            OV.surfaceLow,
+            OV.surfaceLow,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: hasValue
+              ? OV.primary.withOpacity(0.15)
+              : OV.outlineVariant.withOpacity(0.2),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: hasValue ? OV.primary.withOpacity(0.12) : OV.surfaceLow,
+              borderRadius: BorderRadius.circular(12),
             ),
-            Text(item.label, style: GoogleFonts.inter(
-                fontSize: 9, color: OV.outline),
-                textAlign: TextAlign.center),
-          ]),
+            child: Icon(
+              item.icon,
+              size: 18,
+              color: hasValue ? OV.primary : OV.outline,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.label,
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: OV.outline,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  hasValue ? '${item.value} ${item.unit}' : '--',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: OV.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1183,6 +1245,40 @@ class _MetaChip extends StatelessWidget {
     Text(label, style: GoogleFonts.inter(
         fontSize: 11, color: OV.outline)),
   ]);
+}
+
+Widget _cbcField(String label) {
+  return SizedBox(
+    width: 140,
+    child: TextField(
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: GoogleFonts.inter(
+          fontSize: 11,
+          color: OV.outline,
+        ),
+        filled: true,
+        fillColor: OV.surfaceLow,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: OV.outlineVariant,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: OV.primary,
+            width: 1.4,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _EmptyRecords extends StatelessWidget {

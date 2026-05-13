@@ -545,29 +545,29 @@ class _DashboardHome extends StatelessWidget {
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
           // ── Schedule Appointment Button ──────────────────────────
-          SliverToBoxAdapter(
-              child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton.icon(
-                          onPressed: () => Navigator.push(
-                              context,
-                              dSlide(AppointmentRequestsScreen(
-                                  doctorId: doctorId, doctorName: doctorName))),
-                          icon: const Icon(Icons.add_rounded, size: 18),
-                          label: Text('Schedule Appointment',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14, fontWeight: FontWeight.w700)),
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor: OV.slateDark,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14))))))),
+          // SliverToBoxAdapter(
+          //     child: Padding(
+          //         padding: const EdgeInsets.symmetric(horizontal: 20),
+          //         child: SizedBox(
+          //             width: double.infinity,
+          //             height: 52,
+          //             child: ElevatedButton.icon(
+          //                 onPressed: () => Navigator.push(
+          //                     context,
+          //                     dSlide(AppointmentRequestsScreen(
+          //                         doctorId: doctorId, doctorName: doctorName))),
+          //                 icon: const Icon(Icons.add_rounded, size: 18),
+          //                 label: Text('Schedule Appointment',
+          //                     style: GoogleFonts.manrope(
+          //                         fontSize: 14, fontWeight: FontWeight.w700)),
+          //                 style: ElevatedButton.styleFrom(
+          //                     backgroundColor: OV.slateDark,
+          //                     foregroundColor: Colors.white,
+          //                     elevation: 0,
+          //                     shape: RoundedRectangleBorder(
+          //                         borderRadius: BorderRadius.circular(14))))))),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          // const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ]));
   }
 }
