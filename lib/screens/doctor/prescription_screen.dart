@@ -83,6 +83,83 @@ class PrescriptionDrug {
   bool get isValid => name.trim().isNotEmpty && dosage.trim().isNotEmpty;
 }
 
+// ─── Small helpers ────────────────────────────────────────────────────────────
+class _SimpleField extends StatefulWidget {
+  final String label, hint, value;
+  final ValueChanged<String> onChange;
+
+  const _SimpleField({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChange,
+  });
+
+  @override
+  State<_SimpleField> createState() => _SimpleFieldState();
+}
+
+class _SimpleFieldState extends State<_SimpleField> {
+  late TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.value);
+    // Place cursor at the end on first build
+    _ctrl.selection = TextSelection.collapsed(offset: _ctrl.text.length);
+  }
+
+  @override
+  void didUpdateWidget(_SimpleField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only sync when the value was changed externally (not by the user typing)
+    if (widget.value != _ctrl.text) {
+      _ctrl.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _ctrl,
+      onChanged: widget.onChange,
+      style: GoogleFonts.inter(fontSize: 13, color: OV.onSurface),
+      decoration: InputDecoration(
+        labelText: widget.label,
+        hintText: widget.hint,
+        labelStyle: GoogleFonts.inter(fontSize: 11, color: OV.outline),
+        hintStyle: GoogleFonts.inter(fontSize: 12, color: OV.outline),
+        filled: true,
+        fillColor: OV.surfaceLow,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: OV.primary, width: 1.5),
+        ),
+        contentPadding:
+        const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Prescription Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -534,7 +611,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                       Navigator.pop(ctx);
                     })).toList())),
               ])));
-          });
+        });
   }
 }
 
@@ -631,33 +708,6 @@ class _DrugCard extends StatelessWidget {
       focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: OV.primary, width: 1.5)),
       contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4));
-}
-
-// ─── Small helpers ────────────────────────────────────────────────────────────
-class _SimpleField extends StatelessWidget {
-  final String label, hint, value;
-  final ValueChanged<String> onChange;
-  const _SimpleField({required this.label, required this.hint,
-    required this.value, required this.onChange});
-  @override
-  Widget build(BuildContext context) {
-    final ctrl = TextEditingController(text: value);
-    return TextField(
-        controller: ctrl, onChanged: onChange,
-        style: GoogleFonts.inter(fontSize: 13, color: OV.onSurface),
-        decoration: InputDecoration(
-            labelText: label, hintText: hint,
-            labelStyle: GoogleFonts.inter(fontSize: 11, color: OV.outline),
-            hintStyle: GoogleFonts.inter(fontSize: 12, color: OV.outline),
-            filled: true, fillColor: OV.surfaceLow,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: OV.primary, width: 1.5)),
-            contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10)));
-  }
 }
 
 class _Dropdown extends StatelessWidget {

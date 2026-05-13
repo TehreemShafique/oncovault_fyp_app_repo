@@ -69,18 +69,25 @@ class EhrRepositoryImpl {
     return record;
   }
 
-  // ── Fetch all records ─────────────────────────────────────────
+// WITH THIS (filters in Dart, no composite index needed):
   Future<List<MedicalRecordModel>> fetchRecords(String patientId) async {
     final snap = await _records
-        .where('patientId',  isEqualTo: patientId)
-        .where('isArchived', isEqualTo: false)
-        .orderBy('uploadedAt', descending: true)
+        .where('patientId', isEqualTo: patientId)
         .get();
 
-    return snap.docs
+    final all = snap.docs
         .map((d) => MedicalRecordModel.fromMap(
         d.data() as Map<String, dynamic>))
         .toList();
+
+    // Filter and sort in Dart — no composite index needed
+    final filtered = all
+        .where((r) => !r.isArchived)
+        .toList();
+
+    filtered.sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
+
+    return filtered;
   }
 
   // ── Verify integrity ──────────────────────────────────────────
