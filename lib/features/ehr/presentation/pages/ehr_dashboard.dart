@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 
 import '../../../../models/medical_record_model.dart';
@@ -10,6 +11,7 @@ import '../../../../models/patient_profile_model.dart';
 import '../../../../features/ehr/data/repositories/ehr_repository_impl.dart';
 import '../../../../services/doctor_service.dart';
 import '../../../../theme/app_theme.dart';
+import '../../../../screens/doctor/prescription_screen.dart';
 import '../widgets/integrity_status_badge.dart';
 import '../widgets/voice_input_placeholder.dart';
 
@@ -31,13 +33,14 @@ class _EhrDashboardState extends State<EhrDashboard> {
   final _repo    = EhrRepositoryImpl.instance;
   final _service = DoctorService();
 
-  PatientProfile?          _profile;
-  List<MedicalRecordModel> _records    = [];
-  Map<String, dynamic>     _vitals     = {};
-  bool                     _loading    = true;
-  bool                     _uploading  = false;
-  bool                     _hasConsent = false;
-  String?                  _error;
+  PatientProfile?              _profile;
+  List<MedicalRecordModel>     _records       = [];
+  Map<String, dynamic>         _vitals        = {};
+  List<Map<String, dynamic>>   _prescriptions = [];
+  bool                         _loading       = true;
+  bool                         _uploading     = false;
+  bool                         _hasConsent    = false;
+  String?                      _error;
 
   bool get _isDoctor => widget.doctorId != null;
 
@@ -50,21 +53,22 @@ class _EhrDashboardState extends State<EhrDashboard> {
   Future<void> _loadAll() async {
     setState(() { _loading = true; _error = null; });
     try {
-      // Check consent first if doctor
       if (_isDoctor) {
         _hasConsent = await _service.hasConsent(
             widget.doctorId!, widget.patientId);
       }
 
-      final profile = await _repo.fetchPatientProfile(widget.patientId);
-      final records = await _repo.fetchRecords(widget.patientId);
-      final vitals  = await _service.fetchEhrVitals(widget.patientId);
+      final profile       = await _repo.fetchPatientProfile(widget.patientId);
+      final records       = await _repo.fetchRecords(widget.patientId);
+      final vitals        = await _service.fetchEhrVitals(widget.patientId);
+      final prescriptions = await _repo.fetchPrescriptions(widget.patientId);
 
       setState(() {
-        _profile    = profile;
-        _records    = records;
-        _vitals     = vitals;
-        _loading    = false;
+        _profile       = profile;
+        _records       = records;
+        _vitals        = vitals;
+        _prescriptions = prescriptions;
+        _loading       = false;
       });
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
@@ -188,7 +192,6 @@ class _EhrDashboardState extends State<EhrDashboard> {
   }
 
   Widget _buildBody() {
-    // Doctor without consent sees blocked screen
     if (_isDoctor && !_hasConsent) {
       return _NoConsentView(
         patientName: _profile?.name ?? 'Patient',
@@ -203,24 +206,27 @@ class _EhrDashboardState extends State<EhrDashboard> {
       if (_profile != null)
         SliverToBoxAdapter(child: _buildBiodataCard()),
 
-      // ── SECTION 2: Consent (patient only) ──────────
+      // ── SECTION 2: Consent (patient only) ────────────────────
       if (!_isDoctor)
         SliverToBoxAdapter(child: _buildConsentCard()),
 
       // ── SECTION 3: Vitals ────────────────────────────────────
       SliverToBoxAdapter(child: _buildVitalsCard()),
 
-      // ── SECTION 4: Voice Input Placeholder ───────────────────
+      // ── SECTION 4: Voice Input Placeholder (doctor only) ─────
       if (_isDoctor)
         SliverToBoxAdapter(child: const Padding(
           padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
           child  : VoiceInputPlaceholder(),
         )),
 
-      // ── SECTION 5: CBC Report Upload + Records ────────────────
+      // ── SECTION 5: Prescriptions ─────────────────────────────
+      SliverToBoxAdapter(child: _buildPrescriptionsSection()),
+
+      // ── SECTION 6: CBC Report + Records ──────────────────────
       SliverToBoxAdapter(child: _buildCbcSection()),
 
-      // ── SECTION 6: AI Diagnostic Placeholder ─────────────────
+      // ── SECTION 7: AI Diagnostic Placeholder ─────────────────
       SliverToBoxAdapter(child: _buildAiPlaceholder()),
 
       const SliverToBoxAdapter(child: SizedBox(height: 100)),
@@ -247,11 +253,9 @@ class _EhrDashboardState extends State<EhrDashboard> {
                   child: const Icon(Icons.arrow_back_ios_new_rounded,
                       size: 16, color: OV.onSurface)),
             ),
-            Column(children: [
-              Text('Electronic Health Record',
-                  style: GoogleFonts.manrope(fontSize: 15,
-                      fontWeight: FontWeight.w700, color: OV.onSurface)),
-            ]),
+            Text('Electronic Health Record',
+                style: GoogleFonts.manrope(fontSize: 15,
+                    fontWeight: FontWeight.w700, color: OV.onSurface)),
             const SizedBox(width: 34),
           ]),
     );
@@ -268,8 +272,8 @@ class _EhrDashboardState extends State<EhrDashboard> {
         Row(children: [
           Container(width: 56, height: 56,
               decoration: BoxDecoration(
-                  color: OV.primaryContainer,
-                  shape: BoxShape.circle,
+                  color : OV.primaryContainer,
+                  shape : BoxShape.circle,
                   border: Border.all(
                       color: OV.primary.withOpacity(0.3), width: 2)),
               child: Center(child: Text(
@@ -296,9 +300,8 @@ class _EhrDashboardState extends State<EhrDashboard> {
 
         const SizedBox(height: 16),
         _divider(),
-
-        // Biodata grid
         const SizedBox(height: 12),
+
         _BiodataGrid(fields: [
           _BioField(label: 'Age',
               value: p.age != null ? '${p.age} years' : 'N/A',
@@ -351,7 +354,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
               letterSpacing: 0.6, color: OV.outline)),
           const SizedBox(height: 6),
           Container(
-              width: double.infinity,
+              width  : double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                   color       : OV.primaryContainer,
@@ -406,8 +409,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
       context         : context,
       backgroundColor : Colors.white,
       shape           : const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-              top: Radius.circular(24))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(24),
         child  : Column(mainAxisSize: MainAxisSize.min, children: [
@@ -468,8 +470,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
       child : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Row(children: [
-            Icon(Icons.monitor_heart_outlined,
-                size: 18, color: OV.primary),
+            Icon(Icons.monitor_heart_outlined, size: 18, color: OV.primary),
             const SizedBox(width: 8),
             Text('Vitals', style: GoogleFonts.manrope(
                 fontSize: 15, fontWeight: FontWeight.w700,
@@ -485,8 +486,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
                       color       : OV.primaryContainer,
                       borderRadius: BorderRadius.circular(100)),
                   child: Row(children: [
-                    Icon(Icons.edit_rounded,
-                        size: 12, color: OV.primary),
+                    Icon(Icons.edit_rounded, size: 12, color: OV.primary),
                     const SizedBox(width: 4),
                     Text('Edit', style: GoogleFonts.inter(
                         fontSize: 11, fontWeight: FontWeight.w600,
@@ -503,24 +503,23 @@ class _EhrDashboardState extends State<EhrDashboard> {
   void _showVitalsEditDialog() {
     final weightCtrl = TextEditingController(
         text: _vitals['weight']?.toString() ?? '');
-    final bpCtrl = TextEditingController(
+    final bpCtrl     = TextEditingController(
         text: _vitals['bloodPressure']?.toString() ?? '');
-    final tempCtrl = TextEditingController(
+    final tempCtrl   = TextEditingController(
         text: _vitals['temperature']?.toString() ?? '');
-    final hrCtrl = TextEditingController(
+    final hrCtrl     = TextEditingController(
         text: _vitals['heartRate']?.toString() ?? '');
-    final o2Ctrl = TextEditingController(
+    final o2Ctrl     = TextEditingController(
         text: _vitals['oxygenSaturation']?.toString() ?? '');
-    final rrCtrl = TextEditingController(
+    final rrCtrl     = TextEditingController(
         text: _vitals['respiratoryRate']?.toString() ?? '');
 
     showModalBottomSheet(
-      context         : context,
-      isScrollControlled: true,
-      backgroundColor : Colors.white,
-      shape           : const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-              top: Radius.circular(24))),
+      context            : context,
+      isScrollControlled : true,
+      backgroundColor    : Colors.white,
+      shape              : const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => Padding(
         padding: EdgeInsets.fromLTRB(
             24, 24, 24,
@@ -535,33 +534,21 @@ class _EhrDashboardState extends State<EhrDashboard> {
               color: OV.onSurface)),
           const SizedBox(height: 16),
           Row(children: [
-            Expanded(child: _VitalField(
-                ctrl : weightCtrl,
-                label: 'Weight (kg)')),
+            Expanded(child: _VitalField(ctrl: weightCtrl, label: 'Weight (kg)')),
             const SizedBox(width: 12),
-            Expanded(child: _VitalField(
-                ctrl : bpCtrl,
-                label: 'Blood Pressure')),
+            Expanded(child: _VitalField(ctrl: bpCtrl,     label: 'Blood Pressure')),
           ]),
           const SizedBox(height: 10),
           Row(children: [
-            Expanded(child: _VitalField(
-                ctrl : tempCtrl,
-                label: 'Temperature (°C)')),
+            Expanded(child: _VitalField(ctrl: tempCtrl, label: 'Temperature (°C)')),
             const SizedBox(width: 12),
-            Expanded(child: _VitalField(
-                ctrl : hrCtrl,
-                label: 'Heart Rate (bpm)')),
+            Expanded(child: _VitalField(ctrl: hrCtrl,   label: 'Heart Rate (bpm)')),
           ]),
           const SizedBox(height: 10),
           Row(children: [
-            Expanded(child: _VitalField(
-                ctrl : o2Ctrl,
-                label: 'O2 Saturation (%)')),
+            Expanded(child: _VitalField(ctrl: o2Ctrl, label: 'O2 Saturation (%)')),
             const SizedBox(width: 12),
-            Expanded(child: _VitalField(
-                ctrl : rrCtrl,
-                label: 'Resp. Rate (/min)')),
+            Expanded(child: _VitalField(ctrl: rrCtrl, label: 'Resp. Rate (/min)')),
           ]),
           const SizedBox(height: 20),
           SizedBox(width: double.infinity, height: 50,
@@ -593,7 +580,90 @@ class _EhrDashboardState extends State<EhrDashboard> {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // SECTION 5: CBC REPORT + RECORDS
+  // SECTION 5: PRESCRIPTIONS
+  // ─────────────────────────────────────────────────────────────
+  Widget _buildPrescriptionsSection() {
+    return _Section(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── Header row ─────────────────────────────────────────
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Row(children: [
+            Icon(Icons.medication_rounded, size: 18, color: OV.primary),
+            const SizedBox(width: 8),
+            Text('Prescriptions', style: GoogleFonts.manrope(
+                fontSize: 15, fontWeight: FontWeight.w700,
+                color: OV.onSurface)),
+          ]),
+          // Doctor sees "+ New" button to open PrescriptionScreen
+          if (_isDoctor)
+            GestureDetector(
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PrescriptionScreen(
+                      doctorId       : widget.doctorId!,
+                      doctorName     : widget.doctorId!,
+                      doctorSpecialty: '',
+                      patientId      : widget.patientId,
+                      patientName    : _profile?.name ?? '',
+                    ),
+                  ),
+                );
+                // Refresh after returning so new prescription shows up
+                _loadAll();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                    color       : OV.primaryContainer,
+                    borderRadius: BorderRadius.circular(100)),
+                child: Row(children: [
+                  Icon(Icons.add_rounded, size: 12, color: OV.primary),
+                  const SizedBox(width: 4),
+                  Text('New', style: GoogleFonts.inter(
+                      fontSize: 11, fontWeight: FontWeight.w600,
+                      color: OV.primary)),
+                ]),
+              ),
+            ),
+        ]),
+
+        const SizedBox(height: 14),
+
+        // ── Empty state ────────────────────────────────────────
+        if (_prescriptions.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: Column(children: [
+              Icon(Icons.medication_outlined,
+                  size: 36, color: OV.outlineVariant),
+              const SizedBox(height: 8),
+              Text(
+                _isDoctor
+                    ? 'No prescriptions yet. Tap + New to add one.'
+                    : 'No prescriptions have been issued yet.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                    fontSize: 12, color: OV.outline, height: 1.5),
+              ),
+            ])),
+          )
+        else
+          Column(
+            children: _prescriptions
+                .map((rx) => _PrescriptionCard(data: rx))
+                .toList(),
+          ),
+      ]),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 6: CBC REPORT + RECORDS
   // ─────────────────────────────────────────────────────────────
   Widget _buildCbcSection() {
     return Column(children: [
@@ -610,89 +680,36 @@ class _EhrDashboardState extends State<EhrDashboard> {
                       fontSize: 13, color: OV.outline)),
             ]),
       ),
-      // if (_isDoctor && _hasConsent)
-      //   Padding(
-      //     padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      //     child  : GestureDetector(
-      //       onTap: _uploading ? null : _uploadReport,
-      //       child: Container(
-      //         padding   : const EdgeInsets.all(16),
-      //         decoration: BoxDecoration(
-      //             color       : Colors.white,
-      //             borderRadius: BorderRadius.circular(16),
-      //             border      : Border.all(
-      //                 color: OV.primary.withOpacity(0.3),
-      //                 width: 1.5,
-      //                 style: BorderStyle.solid),
-      //             boxShadow   : [BoxShadow(
-      //                 color     : OV.primary.withOpacity(0.06),
-      //                 blurRadius: 8,
-      //                 offset    : const Offset(0, 2))]),
-      //         child: Row(children: [
-      //           Container(width: 44, height: 44,
-      //               decoration: BoxDecoration(
-      //                   color : OV.primaryContainer,
-      //                   shape : BoxShape.circle),
-      //               child: const Icon(Icons.upload_file_rounded,
-      //                   color: OV.primary, size: 20)),
-      //           const SizedBox(width: 14),
-      //           Expanded(child: Column(
-      //               crossAxisAlignment: CrossAxisAlignment.start,
-      //               children: [
-      //                 Text('Upload CBC Report',
-      //                     style: GoogleFonts.manrope(fontSize: 14,
-      //                         fontWeight: FontWeight.w700,
-      //                         color     : OV.onSurface)),
-      //                 Text('PDF or Image — hash generated automatically',
-      //                     style: GoogleFonts.inter(
-      //                         fontSize: 12, color: OV.outline)),
-      //               ])),
-      //           const Icon(Icons.arrow_forward_ios_rounded,
-      //               size: 14, color: OV.primary),
-      //         ]),
-      //       ),
-      //     ),
-      //   ),
 
       if (_isDoctor)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Container(
-            padding: const EdgeInsets.all(18),
+            padding   : const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color       : Colors.white,
               borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
+              boxShadow   : [BoxShadow(
+                  color     : Colors.black.withOpacity(0.04),
                   blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ],
+                  offset    : const Offset(0, 3))],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.science_rounded,
-                        color: OV.primary, size: 18),
-                    const SizedBox(width: 8),
-                    Text(
-                      'CBC Analysis',
-                      style: GoogleFonts.manrope(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: OV.onSurface,
-                      ),
-                    ),
-                  ],
-                ),
+                Row(children: [
+                  const Icon(Icons.science_rounded,
+                      color: OV.primary, size: 18),
+                  const SizedBox(width: 8),
+                  Text('CBC Analysis', style: GoogleFonts.manrope(
+                      fontSize: 15, fontWeight: FontWeight.w700,
+                      color: OV.onSurface)),
+                ]),
                 const SizedBox(height: 14),
                 Wrap(
-                  spacing: 12,
+                  spacing   : 12,
                   runSpacing: 12,
-                  children: [
+                  children  : [
                     _cbcField('WBC'),
                     _cbcField('RBC'),
                     _cbcField('HGB'),
@@ -705,53 +722,21 @@ class _EhrDashboardState extends State<EhrDashboard> {
                     _cbcField('Lymphocytes'),
                   ],
                 ),
-                // const SizedBox(height: 16),
-                // Container(
-                //   width: double.infinity,
-                //   padding: const EdgeInsets.all(14),
-                //   decoration: BoxDecoration(
-                //     color: OV.primaryContainer.withOpacity(0.5),
-                //     borderRadius: BorderRadius.circular(14),
-                //   ),
-                //   child: Row(
-                //     children: [
-                //       const Icon(Icons.mic_rounded,
-                //           color: OV.primary, size: 18),
-                //       const SizedBox(width: 10),
-                //       Expanded(
-                //         child: Text(
-                //           'Voice-to-text CBC entry module',
-                //           style: GoogleFonts.inter(
-                //             fontSize: 12,
-                //             fontWeight: FontWeight.w600,
-                //             color: OV.primary,
-                //           ),
-                //         ),
-                //       ),
-                //     ],
-                //   ),
-                // ),
                 const SizedBox(height: 16),
                 SizedBox(
-                  width: double.infinity,
+                  width : double.infinity,
                   height: 48,
-                  child: ElevatedButton(
+                  child : ElevatedButton(
                     onPressed: () {},
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: OV.slateDark,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(
-                      'Save CBC Data',
-                      style: GoogleFonts.manrope(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                        backgroundColor: OV.slateDark,
+                        foregroundColor: Colors.white,
+                        elevation      : 0,
+                        shape          : RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14))),
+                    child: Text('Save CBC Data',
+                        style: GoogleFonts.manrope(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
                   ),
                 ),
               ],
@@ -759,17 +744,15 @@ class _EhrDashboardState extends State<EhrDashboard> {
           ),
         ),
 
-      _records.isEmpty
-          ? _EmptyRecords(isDoctor: _isDoctor)
-          : Column(
-          children: _records
-              .map((r) => _RecordCard(record: r))
-              .toList()),
+      if (_records.isNotEmpty)
+        Column(
+          children: _records.map((r) => _RecordCard(record: r)).toList(),
+        ),
     ]);
   }
 
   // ─────────────────────────────────────────────────────────────
-  // SECTION 6: AI DIAGNOSTIC PLACEHOLDER
+  // SECTION 7: AI DIAGNOSTIC PLACEHOLDER
   // ─────────────────────────────────────────────────────────────
   Widget _buildAiPlaceholder() {
     return Padding(
@@ -783,33 +766,29 @@ class _EhrDashboardState extends State<EhrDashboard> {
                 begin: Alignment.topLeft,
                 end  : Alignment.bottomRight),
             borderRadius: BorderRadius.circular(16),
-            border      : Border.all(
-                color: OV.primary.withOpacity(0.2))),
+            border      : Border.all(color: OV.primary.withOpacity(0.2))),
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(children: [
-                  const Icon(Icons.auto_awesome_rounded,
-                      size: 16, color: OV.primary),
-                  const SizedBox(width: 6),
-                  Text('AI Diagnostic Engine',
-                      style: GoogleFonts.manrope(fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color     : OV.primary)),
-                ]),
-                Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                        color       : OV.slateDark,
-                        borderRadius: BorderRadius.circular(100)),
-                    child: Text('COMING SOON',
-                        style: GoogleFonts.inter(
-                            fontSize: 9, fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color   : Colors.white))),
-              ]),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Row(children: [
+              const Icon(Icons.auto_awesome_rounded,
+                  size: 16, color: OV.primary),
+              const SizedBox(width: 6),
+              Text('AI Diagnostic Engine',
+                  style: GoogleFonts.manrope(fontSize: 14,
+                      fontWeight: FontWeight.w700, color: OV.primary)),
+            ]),
+            Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color       : OV.slateDark,
+                    borderRadius: BorderRadius.circular(100)),
+                child: Text('COMING SOON',
+                    style: GoogleFonts.inter(
+                        fontSize: 9, fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8, color: Colors.white))),
+          ]),
           const SizedBox(height: 10),
           Text('Upload a CBC report above and the AI model will automatically analyze blood values, detect cancer indicators, and provide diagnostic predictions.',
               style: GoogleFonts.inter(fontSize: 12,
@@ -817,7 +796,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
           const SizedBox(height: 14),
           SizedBox(width: double.infinity, height: 44,
               child: ElevatedButton.icon(
-                onPressed: () {}, // placeholder — no logic
+                onPressed: () {},
                 icon : const Icon(Icons.science_rounded, size: 16),
                 label: Text('Run AI Diagnosis',
                     style: GoogleFonts.manrope(fontSize: 13,
@@ -832,15 +811,199 @@ class _EhrDashboardState extends State<EhrDashboard> {
           const SizedBox(height: 8),
           Center(child: Text('AI model training — 70% presentation',
               style: GoogleFonts.inter(fontSize: 11,
-                  color: OV.outline,
-                  fontStyle: FontStyle.italic))),
+                  color: OV.outline, fontStyle: FontStyle.italic))),
         ]),
       ),
     );
   }
 
-  Widget _divider() => Container(height: 1,
-      color: OV.outlineVariant.withOpacity(0.4));
+  Widget _divider() =>
+      Container(height: 1, color: OV.outlineVariant.withOpacity(0.4));
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PRESCRIPTION CARD
+// ─────────────────────────────────────────────────────────────────
+class _PrescriptionCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _PrescriptionCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final issuedAt   = (data['issuedAt']   as Timestamp).toDate();
+    final validUntil = (data['validUntil'] as Timestamp).toDate();
+    final drugs      = (data['drugs']      as List<dynamic>? ?? []);
+    final notes      = data['additionalNotes']      as String? ?? '';
+    final followUp   = data['followUpInstructions'] as String? ?? '';
+    final doctorName = data['doctorName']            as String? ?? '';
+    final isExpired  = validUntil.isBefore(DateTime.now());
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color       : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border      : Border.all(color: OV.outlineVariant.withOpacity(0.4)),
+        boxShadow   : [BoxShadow(
+            color     : Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset    : const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── Card header ────────────────────────────────────────
+        Container(
+          padding   : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+              color       : OV.primaryContainer.withOpacity(0.4),
+              borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16))),
+          child: Row(children: [
+            Icon(Icons.medication_rounded, size: 15, color: OV.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              'Prescription — ${DateFormat('MMM d, yyyy').format(issuedAt)}',
+              style: GoogleFonts.manrope(fontSize: 13,
+                  fontWeight: FontWeight.w700, color: OV.primary),
+            )),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                  color       : isExpired
+                      ? OV.errorContainer
+                      : OV.tertiaryContainer,
+                  borderRadius: BorderRadius.circular(100)),
+              child: Text(
+                isExpired ? 'Expired' : 'Valid',
+                style: GoogleFonts.inter(fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: isExpired ? OV.error : OV.tertiary),
+              ),
+            ),
+          ]),
+        ),
+
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+            // ── Doctor + validity row ──────────────────────────
+            Row(children: [
+              Icon(Icons.verified_rounded, size: 12, color: OV.tertiary),
+              const SizedBox(width: 4),
+              Text('Dr. $doctorName',
+                  style: GoogleFonts.inter(fontSize: 11,
+                      fontWeight: FontWeight.w600, color: OV.tertiary)),
+              const Spacer(),
+              Icon(Icons.calendar_today_outlined, size: 11, color: OV.outline),
+              const SizedBox(width: 4),
+              Text(
+                'Valid until ${DateFormat('MMM d, yyyy').format(validUntil)}',
+                style: GoogleFonts.inter(fontSize: 11, color: OV.outline),
+              ),
+            ]),
+
+            const SizedBox(height: 12),
+
+            // ── Drug list ──────────────────────────────────────
+            ...drugs.map((d) {
+              final drug = d as Map<String, dynamic>;
+              final name         = drug['name']         as String? ?? '';
+              final dosage       = drug['dosage']       as String? ?? '';
+              final frequency    = drug['frequency']    as String? ?? '';
+              final route        = drug['route']        as String? ?? '';
+              final duration     = drug['duration']     as String? ?? '';
+              final instructions = drug['instructions'] as String? ?? '';
+
+              return Container(
+                margin   : const EdgeInsets.only(bottom: 8),
+                padding  : const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color       : OV.surfaceLow,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(child: Text(name,
+                        style: GoogleFonts.manrope(fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: OV.onSurface))),
+                    if (dosage.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                            color       : OV.primaryContainer,
+                            borderRadius: BorderRadius.circular(100)),
+                        child: Text(dosage,
+                            style: GoogleFonts.inter(fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: OV.primary)),
+                      ),
+                  ]),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 12, runSpacing: 4, children: [
+                    if (frequency.isNotEmpty)
+                      _RxChip(Icons.schedule_rounded,    frequency),
+                    if (route.isNotEmpty)
+                      _RxChip(Icons.route_rounded,       route),
+                    if (duration.isNotEmpty)
+                      _RxChip(Icons.timelapse_rounded,   duration),
+                  ]),
+                  if (instructions.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(instructions,
+                        style: GoogleFonts.inter(fontSize: 11,
+                            color     : OV.onSurfaceVariant,
+                            fontStyle : FontStyle.italic)),
+                  ],
+                ]),
+              );
+            }).toList(),
+
+            // ── Additional notes ───────────────────────────────
+            if (notes.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('Notes', style: GoogleFonts.inter(fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6, color: OV.outline)),
+              const SizedBox(height: 4),
+              Text(notes, style: GoogleFonts.inter(
+                  fontSize: 12, color: OV.onSurfaceVariant, height: 1.4)),
+            ],
+
+            // ── Follow-up ──────────────────────────────────────
+            if (followUp.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('Follow-Up', style: GoogleFonts.inter(fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6, color: OV.outline)),
+              const SizedBox(height: 4),
+              Text(followUp, style: GoogleFonts.inter(
+                  fontSize: 12, color: OV.onSurfaceVariant, height: 1.4)),
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RX CHIP
+// ─────────────────────────────────────────────────────────────────
+class _RxChip extends StatelessWidget {
+  final IconData icon;
+  final String   label;
+  const _RxChip(this.icon, this.label);
+
+  @override
+  Widget build(BuildContext context) => Row(
+      mainAxisSize: MainAxisSize.min, children: [
+    Icon(icon, size: 11, color: OV.outline),
+    const SizedBox(width: 3),
+    Text(label, style: GoogleFonts.inter(fontSize: 11, color: OV.outline)),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -874,8 +1037,7 @@ class _NoConsentView extends StatelessWidget {
           child  : Column(mainAxisSize: MainAxisSize.min, children: [
             Container(width: 80, height: 80,
                 decoration: BoxDecoration(
-                    color       : OV.errorContainer,
-                    shape       : BoxShape.circle),
+                    color: OV.errorContainer, shape: BoxShape.circle),
                 child: Icon(Icons.lock_rounded,
                     size: 36, color: OV.error)),
             const SizedBox(height: 20),
@@ -932,18 +1094,16 @@ class _RecordCard extends StatelessWidget {
                 offset    : const Offset(0, 3))]),
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(child: Text(record.title,
-                    style: GoogleFonts.manrope(fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color     : OV.onSurface),
-                    overflow: TextOverflow.ellipsis)),
-                const SizedBox(width: 8),
-                AsyncIntegrityBadge(
-                    fileUrl   : record.fileUrl,
-                    storedHash: record.fileHash),
-              ]),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Expanded(child: Text(record.title,
+                style: GoogleFonts.manrope(fontSize: 14,
+                    fontWeight: FontWeight.w700, color: OV.onSurface),
+                overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 8),
+            AsyncIntegrityBadge(
+                fileUrl   : record.fileUrl,
+                storedHash: record.fileHash),
+          ]),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 4, children: [
             _MetaChip(icon: Icons.local_hospital_outlined,
@@ -988,7 +1148,7 @@ class _RecordCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// VITALS GRID WIDGET
+// VITALS GRID
 // ─────────────────────────────────────────────────────────────────
 class _VitalsGrid extends StatelessWidget {
   final Map<String, dynamic> vitals;
@@ -997,31 +1157,32 @@ class _VitalsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      _VitalItem(label: 'Weight',       value: vitals['weight'],
-          unit: 'kg',   icon: Icons.monitor_weight_outlined),
+      _VitalItem(label: 'Weight',    value: vitals['weight'],
+          unit: 'kg',    icon: Icons.monitor_weight_outlined),
       _VitalItem(label: 'Blood Pressure', value: vitals['bloodPressure'],
-          unit: 'mmHg', icon: Icons.favorite_outline_rounded),
-      _VitalItem(label: 'Temperature',  value: vitals['temperature'],
-          unit: '°C',   icon: Icons.thermostat_rounded),
-      _VitalItem(label: 'Heart Rate',   value: vitals['heartRate'],
-          unit: 'bpm',  icon: Icons.monitor_heart_outlined),
-      _VitalItem(label: 'O2 Sat',       value: vitals['oxygenSaturation'],
-          unit: '%',    icon: Icons.air_rounded),
-      _VitalItem(label: 'Resp. Rate',   value: vitals['respiratoryRate'],
-          unit: '/min', icon: Icons.air_outlined),
+          unit: 'mmHg',  icon: Icons.favorite_outline_rounded),
+      _VitalItem(label: 'Temperature', value: vitals['temperature'],
+          unit: '°C',    icon: Icons.thermostat_rounded),
+      _VitalItem(label: 'Heart Rate', value: vitals['heartRate'],
+          unit: 'bpm',   icon: Icons.monitor_heart_outlined),
+      _VitalItem(label: 'Oxygen Saturation', value: vitals['oxygenSaturation'],
+          unit: '%',     icon: Icons.air_rounded),
+      _VitalItem(label: 'Resp. Rate', value: vitals['respiratoryRate'],
+          unit: '/min',  icon: Icons.air_outlined),
+      _VitalItem(label: 'Blood Sugar', value: vitals['bloodSugar'],
+          unit: 'mg/dL', icon: Icons.bloodtype_outlined),
+      _VitalItem(label: 'BMI',        value: vitals['bmi'],
+          unit: 'kg/m²', icon: Icons.accessibility_new_rounded),
     ];
 
     return GridView.count(
-      crossAxisCount : 2,
-      shrinkWrap     : true,
-      physics        : const NeverScrollableScrollPhysics(),
-      // crossAxisSpacing: 10,
-      // mainAxisSpacing : 10,
-      // childAspectRatio: 1.55,
+      crossAxisCount  : 4,
+      shrinkWrap      : true,
+      physics         : const NeverScrollableScrollPhysics(),
       childAspectRatio: 1.85,
-      crossAxisSpacing: 6,
-      mainAxisSpacing: 6,
-      children       : items.map((item) => _VitalTile(item: item)).toList(),
+      crossAxisSpacing: 4,
+      mainAxisSpacing : 4,
+      children        : items.map((item) => _VitalTile(item: item)).toList(),
     );
   }
 }
@@ -1041,23 +1202,18 @@ class _VitalTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasValue = item.value != null && item.value.toString().isNotEmpty;
+    final hasValue =
+        item.value != null && item.value.toString().isNotEmpty;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding   : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: hasValue
-              ? [
-            OV.primaryContainer.withOpacity(0.8),
-            Colors.white,
-          ]
-              : [
-            OV.surfaceLow,
-            OV.surfaceLow,
-          ],
+              ? [OV.primaryContainer.withOpacity(0.8), Colors.white]
+              : [OV.surfaceLow, OV.surfaceLow],
           begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          end  : Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
@@ -1065,57 +1221,36 @@ class _VitalTile extends StatelessWidget {
               ? OV.primary.withOpacity(0.15)
               : OV.outlineVariant.withOpacity(0.2),
         ),
-        boxShadow: [
-          BoxShadow(
+        boxShadow: [BoxShadow(
             color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+            blurRadius: 8, offset: const Offset(0, 2))],
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: hasValue ? OV.primary.withOpacity(0.12) : OV.surfaceLow,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              item.icon,
-              size: 18,
-              color: hasValue ? OV.primary : OV.outline,
-            ),
+      child: Row(children: [
+        Container(
+          width : 30, height: 30,
+          decoration: BoxDecoration(
+              color       : hasValue
+                  ? OV.primary.withOpacity(0.12)
+                  : OV.surfaceLow,
+              borderRadius: BorderRadius.circular(12)),
+          child: Icon(item.icon, size: 18,
+              color: hasValue ? OV.primary : OV.outline),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(
+            mainAxisAlignment : MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(item.label, style: GoogleFonts.inter(
+              fontSize: 10, fontWeight: FontWeight.w600,
+              color: OV.outline)),
+          const SizedBox(height: 3),
+          Text(
+            hasValue ? '${item.value} ${item.unit}' : '--',
+            style: GoogleFonts.manrope(fontSize: 13,
+                fontWeight: FontWeight.w700, color: OV.onSurface),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.label,
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: OV.outline,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  hasValue ? '${item.value} ${item.unit}' : '--',
-                  style: GoogleFonts.manrope(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: OV.onSurface,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ])),
+      ]),
     );
   }
 }
@@ -1137,24 +1272,21 @@ class _BiodataGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      children: List.generate(
-        (fields.length / 2).ceil(),
-            (i) {
-          final left  = fields[i * 2];
-          final right = i * 2 + 1 < fields.length
-              ? fields[i * 2 + 1] : null;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child  : Row(children: [
-              Expanded(child: _BioTile(field: left)),
-              const SizedBox(width: 10),
-              Expanded(child: right != null
-                  ? _BioTile(field: right)
-                  : const SizedBox()),
-            ]),
-          );
-        },
-      ),
+      children: List.generate((fields.length / 2).ceil(), (i) {
+        final left  = fields[i * 2];
+        final right =
+        i * 2 + 1 < fields.length ? fields[i * 2 + 1] : null;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child  : Row(children: [
+            Expanded(child: _BioTile(field: left)),
+            const SizedBox(width: 10),
+            Expanded(child: right != null
+                ? _BioTile(field: right)
+                : const SizedBox()),
+          ]),
+        );
+      }),
     );
   }
 }
@@ -1165,22 +1297,21 @@ class _BioTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(field.icon, size: 14, color: OV.outline),
-        const SizedBox(width: 6),
-        Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(field.label, style: GoogleFonts.inter(
-              fontSize: 9, fontWeight: FontWeight.w700,
-              letterSpacing: 0.6, color: OV.outline)),
-          const SizedBox(height: 2),
-          Text(field.value, style: GoogleFonts.inter(
-              fontSize: 12, fontWeight: FontWeight.w600,
-              color: OV.onSurface),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-        ])),
-      ]);
+      crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Icon(field.icon, size: 14, color: OV.outline),
+    const SizedBox(width: 6),
+    Expanded(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(field.label, style: GoogleFonts.inter(
+          fontSize: 9, fontWeight: FontWeight.w700,
+          letterSpacing: 0.6, color: OV.outline)),
+      const SizedBox(height: 2),
+      Text(field.value, style: GoogleFonts.inter(
+          fontSize: 12, fontWeight: FontWeight.w600,
+          color: OV.onSurface),
+          maxLines: 1, overflow: TextOverflow.ellipsis),
+    ])),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1214,15 +1345,15 @@ class _VitalField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => TextField(
-      controller: ctrl,
+      controller  : ctrl,
       keyboardType: TextInputType.text,
-      style      : GoogleFonts.inter(fontSize: 13, color: OV.onSurface),
-      decoration : InputDecoration(
-        labelText   : label,
-        labelStyle  : GoogleFonts.inter(fontSize: 11, color: OV.outline),
-        filled      : true,
-        fillColor   : OV.surfaceLow,
-        border      : OutlineInputBorder(
+      style       : GoogleFonts.inter(fontSize: 13, color: OV.onSurface),
+      decoration  : InputDecoration(
+        labelText    : label,
+        labelStyle   : GoogleFonts.inter(fontSize: 11, color: OV.outline),
+        filled       : true,
+        fillColor    : OV.surfaceLow,
+        border       : OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide  : BorderSide(color: OV.outlineVariant)),
         focusedBorder: OutlineInputBorder(
@@ -1242,8 +1373,7 @@ class _MetaChip extends StatelessWidget {
       mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 12, color: OV.outline),
     const SizedBox(width: 4),
-    Text(label, style: GoogleFonts.inter(
-        fontSize: 11, color: OV.outline)),
+    Text(label, style: GoogleFonts.inter(fontSize: 11, color: OV.outline)),
   ]);
 }
 
@@ -1252,62 +1382,31 @@ Widget _cbcField(String label) {
     width: 140,
     child: TextField(
       decoration: InputDecoration(
-        labelText: label,
-        labelStyle: GoogleFonts.inter(
-          fontSize: 11,
-          color: OV.outline,
-        ),
-        filled: true,
-        fillColor: OV.surfaceLow,
+        labelText    : label,
+        labelStyle   : GoogleFonts.inter(fontSize: 11, color: OV.outline),
+        filled       : true,
+        fillColor    : OV.surfaceLow,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 12,
-        ),
+            horizontal: 12, vertical: 12),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: OV.outlineVariant,
-          ),
-        ),
+            borderRadius: BorderRadius.circular(12),
+            borderSide  : BorderSide(color: OV.outlineVariant)),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: OV.primary,
-            width: 1.4,
-          ),
-        ),
+            borderRadius: BorderRadius.circular(12),
+            borderSide  : const BorderSide(
+                color: OV.primary, width: 1.4)),
       ),
     ),
   );
 }
 
-class _EmptyRecords extends StatelessWidget {
-  final bool isDoctor;
-  const _EmptyRecords({required this.isDoctor});
-  @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 40),
-      child: Column(children: [
-        Icon(Icons.folder_open_rounded,
-            size: 48, color: OV.outlineVariant),
-        const SizedBox(height: 12),
-        Text('No CBC reports yet', style: GoogleFonts.manrope(
-            fontSize: 14, fontWeight: FontWeight.w600,
-            color: OV.outline)),
-        const SizedBox(height: 6),
-        Text(
-          isDoctor
-              ? 'Tap the upload area above to add\nthe first CBC report.'
-              : 'Your doctor has not uploaded\nany reports yet.',
-          textAlign: TextAlign.center,
-          style: GoogleFonts.inter(fontSize: 12, color: OV.outline),
-        ),
-      ]));
-}
-
+// ─────────────────────────────────────────────────────────────────
+// ERROR VIEW
+// ─────────────────────────────────────────────────────────────────
 class _ErrorView extends StatelessWidget {
   final String error; final VoidCallback onRetry;
   const _ErrorView({required this.error, required this.onRetry});
+
   @override
   Widget build(BuildContext context) => Center(child: Padding(
       padding: const EdgeInsets.all(32),
@@ -1321,8 +1420,9 @@ class _ErrorView extends StatelessWidget {
         Text(error, textAlign: TextAlign.center,
             style: GoogleFonts.inter(fontSize: 12, color: OV.outline)),
         const SizedBox(height: 24),
-        ElevatedButton(onPressed: onRetry,
-            style: ElevatedButton.styleFrom(
+        ElevatedButton(
+            onPressed: onRetry,
+            style    : ElevatedButton.styleFrom(
                 backgroundColor: OV.slateDark,
                 foregroundColor: Colors.white,
                 shape          : RoundedRectangleBorder(

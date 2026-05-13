@@ -25,6 +25,10 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   final _notesCtrl = TextEditingController();
   bool _isLoading = false;
 
+  // Booked slot keys stream — updates whenever the doctor's slots change.
+  // Key format: "yyyy-MM-dd_HH:mm AM/PM"
+  Set<String> _bookedSlotKeys = {};
+
   List<DateTime> get _calendarDays {
     final first = DateTime(_focusedMonth.year, _focusedMonth.month, 1);
     final last  = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0);
@@ -32,11 +36,32 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return List.generate(42, (i) => start.add(Duration(days: i)));
   }
 
-  List<String> get _morningSlots => ['08:00 AM', '09:30 AM', '11:00 AM'];
+  List<String> get _morningSlots   => ['08:00 AM', '09:30 AM', '11:00 AM'];
   List<String> get _afternoonSlots => ['01:30 PM', '03:00 PM', '04:30 PM'];
 
   List<String> get _availableSlots => _selectedDoctor?.availableSlots ?? [];
 
+  // Returns true if this slot on the selected date is already taken.
+  bool _isSlotBooked(String slot) {
+    if (_selectedDate == null || _selectedDoctor == null) return false;
+    final y = _selectedDate!.year.toString().padLeft(4, '0');
+    final m = _selectedDate!.month.toString().padLeft(2, '0');
+    final d = _selectedDate!.day.toString().padLeft(2, '0');
+    final key = '${y}-${m}-${d}_$slot';
+    return _bookedSlotKeys.contains(key);
+  }
+
+  // ── Doctor selection ──────────────────────────────────────────
+  void _selectDoctor(_RealDoctor doc) {
+    if (_selectedDoctor?.id == doc.id) return;
+    setState(() {
+      _selectedDoctor = doc;
+      _selectedSlot   = null;   // clear stale slot selection
+      _bookedSlotKeys = {};     // reset until new stream arrives
+    });
+  }
+
+  // ── Confirm booking ───────────────────────────────────────────
   Future<void> _confirmBooking() async {
     if (_selectedDoctor == null || _selectedDate == null || _selectedSlot == null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -46,6 +71,18 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
       return;
     }
+
+    // Guard: re-check the slot is still free at booking time.
+    if (_isSlotBooked(_selectedSlot!)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('That slot was just taken. Please select another time.',
+              style: GoogleFonts.inter(fontSize: 13)),
+          backgroundColor: OV.error, behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+      setState(() => _selectedSlot = null);
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       await _service.bookAppointment(
@@ -105,9 +142,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
   Future<void> _loadDoctors() async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('doctors')
-          .get();
+      final snap = await FirebaseFirestore.instance.collection('doctors').get();
       final docs = snap.docs
           .where((d) => (d.data()['isAvailable'] ?? true) == true)
           .map((d) {
@@ -173,11 +208,38 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                       style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
                       textAlign: TextAlign.center)))
             else
-              ..._doctors.map((doc) => _DoctorCard(
-                doctor: doc,
-                isSelected: _selectedDoctor?.id == doc.id,
-                onTap: () => setState(() => _selectedDoctor = doc),
-              )),
+            // Stream booked slots whenever the selected doctor changes.
+              ..._doctors.map((doc) {
+                if (doc.id == _selectedDoctor?.id) {
+                  // Wrap selected doctor card in a StreamBuilder so slot
+                  // availability updates in real-time.
+                  return StreamBuilder<Set<String>>(
+                    stream: _service.watchBookedSlots(doc.id),
+                    builder: (_, snap) {
+                      if (snap.hasData) {
+                        // Update local set without calling setState to avoid
+                        // full rebuild; the slot section rebuilds via its own
+                        // parent setState when the date/slot changes anyway.
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted && _bookedSlotKeys != snap.data!) {
+                            setState(() => _bookedSlotKeys = snap.data!);
+                          }
+                        });
+                      }
+                      return _DoctorCard(
+                        doctor: doc,
+                        isSelected: true,
+                        onTap: () => _selectDoctor(doc),
+                      );
+                    },
+                  );
+                }
+                return _DoctorCard(
+                  doctor: doc,
+                  isSelected: false,
+                  onTap: () => _selectDoctor(doc),
+                );
+              }),
 
             const SizedBox(height: 24),
 
@@ -247,18 +309,37 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             if (_selectedDate != null) ...[
               Text('Available Time Slots', style: GoogleFonts.manrope(
                   fontSize: 16, fontWeight: FontWeight.w700, color: OV.onSurface)),
+              const SizedBox(height: 4),
+              // Legend
+              Row(children: [
+                _LegendDot(color: OV.slateDark),
+                const SizedBox(width: 4),
+                Text('Selected', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+                const SizedBox(width: 14),
+                _LegendDot(color: OV.errorContainer, border: OV.error.withOpacity(0.4)),
+                const SizedBox(width: 4),
+                Text('Not Available', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+              ]),
               const SizedBox(height: 12),
               _SlotSection(
                   label: 'Morning Sessions',
                   slots: _morningSlots.where((s) => _availableSlots.contains(s) || _selectedDoctor == null).toList(),
                   selectedSlot: _selectedSlot,
-                  onSelect: (s) => setState(() => _selectedSlot = s)),
+                  bookedChecker: _isSlotBooked,
+                  onSelect: (s) {
+                    if (_isSlotBooked(s)) return; // ignore taps on booked slots
+                    setState(() => _selectedSlot = s);
+                  }),
               const SizedBox(height: 16),
               _SlotSection(
                   label: 'Afternoon Sessions',
                   slots: _afternoonSlots.where((s) => _availableSlots.contains(s) || _selectedDoctor == null).toList(),
                   selectedSlot: _selectedSlot,
-                  onSelect: (s) => setState(() => _selectedSlot = s)),
+                  bookedChecker: _isSlotBooked,
+                  onSelect: (s) {
+                    if (_isSlotBooked(s)) return;
+                    setState(() => _selectedSlot = s);
+                  }),
               const SizedBox(height: 16),
               Row(children: [
                 Icon(Icons.timer_outlined, size: 14, color: OV.outline),
@@ -327,6 +408,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   }
 }
 
+// ── Small legend dot ──────────────────────────────────────────────────────────
+class _LegendDot extends StatelessWidget {
+  final Color color;
+  final Color? border;
+  const _LegendDot({required this.color, this.border});
+  @override
+  Widget build(BuildContext context) => Container(
+      width: 12, height: 12,
+      decoration: BoxDecoration(
+          color: color, shape: BoxShape.circle,
+          border: border != null ? Border.all(color: border!, width: 1) : null));
+}
+
 // Real doctor data fetched from Firestore
 class _RealDoctor {
   final String id, name, specialty, badge;
@@ -356,7 +450,6 @@ class _DoctorCard extends StatelessWidget {
               boxShadow: [BoxShadow(color: isSelected ? OV.primary.withOpacity(0.1) : Colors.black.withOpacity(0.04),
                   blurRadius: isSelected ? 20 : 8, offset: const Offset(0, 4))]),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Doctor image placeholder
             ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                 child: Container(height: 160, width: double.infinity,
                     color: OV.primaryContainer,
@@ -385,31 +478,68 @@ class _DoctorCard extends StatelessWidget {
           ])));
 }
 
+// ── Slot section with booked-state support ────────────────────────────────────
 class _SlotSection extends StatelessWidget {
-  final String label; final List<String> slots;
-  final String? selectedSlot; final ValueChanged<String> onSelect;
-  const _SlotSection({required this.label, required this.slots,
-    required this.selectedSlot, required this.onSelect});
+  final String label;
+  final List<String> slots;
+  final String? selectedSlot;
+  final bool Function(String slot) bookedChecker;
+  final ValueChanged<String> onSelect;
+
+  const _SlotSection({
+    required this.label,
+    required this.slots,
+    required this.selectedSlot,
+    required this.bookedChecker,
+    required this.onSelect,
+  });
 
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Text(label, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: OV.onSurfaceVariant)),
     const SizedBox(height: 10),
     Wrap(spacing: 10, runSpacing: 10, children: slots.map((slot) {
-      final sel = selectedSlot == slot;
+      final isSelected = selectedSlot == slot;
+      final isBooked   = bookedChecker(slot);
+
       return GestureDetector(
-          onTap: () => onSelect(slot),
+          onTap: isBooked ? null : () => onSelect(slot),
           child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                  color: sel ? OV.slateDark : Colors.white,
+                // Booked → muted red; Selected → dark; Default → white
+                  color: isBooked
+                      ? OV.errorContainer
+                      : isSelected
+                      ? OV.slateDark
+                      : Colors.white,
                   borderRadius: BorderRadius.circular(100),
-                  border: Border.all(color: sel ? OV.slateDark : OV.outlineVariant.withOpacity(0.6)),
-                  boxShadow: sel ? [BoxShadow(color: OV.slateDark.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 3))] : null),
-              child: Text(slot, style: GoogleFonts.inter(
-                  fontSize: 13, fontWeight: FontWeight.w600,
-                  color: sel ? Colors.white : OV.onSurface))));
+                  border: Border.all(
+                      color: isBooked
+                          ? OV.error.withOpacity(0.35)
+                          : isSelected
+                          ? OV.slateDark
+                          : OV.outlineVariant.withOpacity(0.6)),
+                  boxShadow: isSelected
+                      ? [BoxShadow(color: OV.slateDark.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 3))]
+                      : null),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (isBooked) ...[
+                  Icon(Icons.block_rounded, size: 12, color: OV.error.withOpacity(0.7)),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                    isBooked ? '$slot · Not Available' : slot,
+                    style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isBooked
+                            ? OV.error.withOpacity(0.8)
+                            : isSelected
+                            ? Colors.white
+                            : OV.onSurface)),
+              ])));
     }).toList()),
   ]);
 }

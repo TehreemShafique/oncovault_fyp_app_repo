@@ -369,34 +369,34 @@ class _DashboardHome extends StatelessWidget {
                                     .toList());
                           })))),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-          // ── Quick Actions ────────────────────────────────────────
-          SliverToBoxAdapter(
-              child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(children: [
-                    _QuickAction(
-                        icon: Icons.edit_note_rounded,
-                        label: 'Clinical\nNotes',
-                        bg: OV.primaryContainer,
-                        iconColor: OV.primary,
-                        onTap: () {}),
-                    const SizedBox(width: 12),
-                    _QuickAction(
-                        icon: Icons.science_outlined,
-                        label: 'Labs',
-                        bg: OV.tertiaryContainer,
-                        iconColor: OV.tertiary,
-                        onTap: () {}),
-                    const SizedBox(width: 12),
-                    _QuickAction(
-                        icon: Icons.image_search_rounded,
-                        label: 'Imaging',
-                        bg: OV.secondaryContainer,
-                        iconColor: OV.secondary,
-                        onTap: () {}),
-                  ]))),
+          // const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          //
+          // // ── Quick Actions ────────────────────────────────────────
+          // SliverToBoxAdapter(
+          //     child: Padding(
+          //         padding: const EdgeInsets.symmetric(horizontal: 20),
+          //         child: Row(children: [
+          //           _QuickAction(
+          //               icon: Icons.edit_note_rounded,
+          //               label: 'Clinical\nNotes',
+          //               bg: OV.primaryContainer,
+          //               iconColor: OV.primary,
+          //               onTap: () {}),
+          //           const SizedBox(width: 12),
+          //           _QuickAction(
+          //               icon: Icons.science_outlined,
+          //               label: 'Labs',
+          //               bg: OV.tertiaryContainer,
+          //               iconColor: OV.tertiary,
+          //               onTap: () {}),
+          //           const SizedBox(width: 12),
+          //           _QuickAction(
+          //               icon: Icons.image_search_rounded,
+          //               label: 'Imaging',
+          //               bg: OV.secondaryContainer,
+          //               iconColor: OV.secondary,
+          //               onTap: () {}),
+          //         ]))),
 
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
@@ -542,9 +542,9 @@ class _DashboardHome extends StatelessWidget {
                                 size: 14, color: OV.primary),
                           ]))))),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 20)),
-
-          // ── Schedule Appointment Button ──────────────────────────
+          // const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          //
+          // // ── Schedule Appointment Button ──────────────────────────
           // SliverToBoxAdapter(
           //     child: Padding(
           //         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -566,7 +566,7 @@ class _DashboardHome extends StatelessWidget {
           //                     elevation: 0,
           //                     shape: RoundedRectangleBorder(
           //                         borderRadius: BorderRadius.circular(14))))))),
-
+          //
           // const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ]));
   }
@@ -664,41 +664,41 @@ class _RecentPatientRow extends StatelessWidget {
           ])));
 }
 
-// ── Quick Action Tile ─────────────────────────────────────────────
-class _QuickAction extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color bg, iconColor;
-  final VoidCallback onTap;
-  const _QuickAction(
-      {required this.icon,
-        required this.label,
-        required this.bg,
-        required this.iconColor,
-        required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-      child: GestureDetector(
-          onTap: onTap,
-          child: DCard(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              child: Column(children: [
-                Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                        color: bg, borderRadius: BorderRadius.circular(14)),
-                    child: Icon(icon, color: iconColor, size: 24)),
-                const SizedBox(height: 8),
-                Text(label,
-                    style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: OV.onSurface),
-                    textAlign: TextAlign.center),
-              ]))));
-}
+// // ── Quick Action Tile ─────────────────────────────────────────────
+// class _QuickAction extends StatelessWidget {
+//   final IconData icon;
+//   final String label;
+//   final Color bg, iconColor;
+//   final VoidCallback onTap;
+//   const _QuickAction(
+//       {required this.icon,
+//         required this.label,
+//         required this.bg,
+//         required this.iconColor,
+//         required this.onTap});
+//
+//   @override
+//   Widget build(BuildContext context) => Expanded(
+//       child: GestureDetector(
+//           onTap: onTap,
+//           child: DCard(
+//               padding: const EdgeInsets.symmetric(vertical: 18),
+//               child: Column(children: [
+//                 Container(
+//                     width: 48,
+//                     height: 48,
+//                     decoration: BoxDecoration(
+//                         color: bg, borderRadius: BorderRadius.circular(14)),
+//                     child: Icon(icon, color: iconColor, size: 24)),
+//                 const SizedBox(height: 8),
+//                 Text(label,
+//                     style: GoogleFonts.inter(
+//                         fontSize: 12,
+//                         fontWeight: FontWeight.w600,
+//                         color: OV.onSurface),
+//                     textAlign: TextAlign.center),
+//               ]))));
+// }
 
 // ── Appointment Schedule Item (real Firestore data) ──────────────────────────
 class _AppointmentScheduleItem extends StatelessWidget {
