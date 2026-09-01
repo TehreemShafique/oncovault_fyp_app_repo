@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/doctor_service.dart';
 import 'doctor_widgets.dart';
+import 'blood_cancer_ehr_screen.dart';
 
 class AppointmentDetailDoctorScreen extends StatefulWidget {
   final AppointmentModel appointment;
@@ -229,15 +230,72 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
                           padding: const EdgeInsets.symmetric(vertical: 14)),
                       child: Text('Approve', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700)))),
                 ]),
-                if (a.status == AppointmentStatus.approved) SizedBox(width: double.infinity, height: 50,
+                if (a.status == AppointmentStatus.approved) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        dSlide(BloodCancerEhrScreen(
+                          patientId: a.patientId,
+                          patientName: a.patientName,
+                          doctorId: a.doctorId,
+                          doctorName: a.doctorName,
+                        )),
+                      ),
+                      icon: const Icon(Icons.medical_information_rounded, size: 18),
+                      label: Text('Open Patient EHR', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: OV.primary,
+                        side: const BorderSide(color: OV.primary, width: 1.5),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
                     child: ElevatedButton(
-                        onPressed: _markComplete,
-                        style: ElevatedButton.styleFrom(backgroundColor: OV.tertiary, foregroundColor: Colors.white,
-                            elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-                        child: Text('Mark as Completed', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700)))),
-                if (a.status != AppointmentStatus.pending && a.status != AppointmentStatus.approved)
+                      onPressed: _markComplete,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: OV.tertiary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: Text('Mark as Completed', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+                if (a.status != AppointmentStatus.pending && a.status != AppointmentStatus.approved) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        dSlide(BloodCancerEhrScreen(
+                          patientId: a.patientId,
+                          patientName: a.patientName,
+                          doctorId: a.doctorId,
+                          doctorName: a.doctorName,
+                        )),
+                      ),
+                      icon: const Icon(Icons.medical_information_rounded, size: 18),
+                      label: Text('Open Patient EHR', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: OV.primary,
+                        side: BorderSide(color: OV.primary.withOpacity(0.5)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Center(child: Text('This appointment is ${a.status.label.toLowerCase()}.',
                       style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant))),
+                ],
               ])),
         ])));
   }

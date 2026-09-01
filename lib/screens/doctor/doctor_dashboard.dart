@@ -6,18 +6,17 @@ import '../../theme/app_theme.dart';
 import '../../services/auth_service.dart';
 import '../profile_selection_screen.dart';
 import '../../models/appointment_model.dart';
-import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
 import 'doctor_widgets.dart';
 import '../../models/patient_profile_model.dart';
-import 'full_medical_history_screen.dart';
 import 'appointment_requests_screen.dart';
 import 'patient_list_screen.dart';
 import 'critical_alerts_screen.dart';
 import 'doctor_notifications_screen.dart';
 import 'doctor_profile_screen.dart';
-import '../../features/ehr/presentation/pages/ehr_dashboard.dart';
 import 'prescription_screen.dart';
+import 'patient_detail_screen.dart';
+import 'blood_cancer_ehr_screen.dart';
 
 class DoctorDashboard extends StatefulWidget {
   final String doctorId;
@@ -50,7 +49,10 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
           doctorId: widget.doctorId,
           doctorName: widget.doctorName,
         ),
-        _DoctorArchiveTab(doctorId: widget.doctorId),
+        _DoctorArchiveTab(
+          doctorId: widget.doctorId,
+          doctorName: widget.doctorName,
+        ),
       ]),
       bottomNavigationBar: _BottomNav(
         current: _tab,
@@ -362,7 +364,7 @@ class _DashboardHome extends StatelessWidget {
                                     patient: p,
                                     onTap: () => Navigator.push(
                                         context,
-                                        dSlide(EhrDashboard(
+                                        dSlide(PatientDetailScreen(
                                           patientId: p.uid,
                                           doctorId: doctorId,
                                         )))))
@@ -861,7 +863,8 @@ class _NavItem extends StatelessWidget {
 // ── Archive Tab ───────────────────────────────────────────────────
 class _DoctorArchiveTab extends StatelessWidget {
   final String doctorId;
-  const _DoctorArchiveTab({required this.doctorId});
+  final String doctorName;
+  const _DoctorArchiveTab({required this.doctorId, required this.doctorName});
 
   @override
   Widget build(BuildContext context) {
@@ -911,9 +914,11 @@ class _DoctorArchiveTab extends StatelessWidget {
                           return GestureDetector(
                             onTap: () => Navigator.push(
                                 context,
-                                dSlide(EhrDashboard(
+                                dSlide(BloodCancerEhrScreen(
                                   patientId: p.uid,
+                                  patientName: p.name,
                                   doctorId: doctorId,
+                                  doctorName: doctorName,
                                 ))),
                             child: Container(
                                 margin: const EdgeInsets.only(bottom: 12),

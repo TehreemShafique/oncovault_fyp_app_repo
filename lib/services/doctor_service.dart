@@ -4,6 +4,7 @@ import '../models/doctor_model.dart';
 import '../models/appointment_model.dart';
 import '../models/patient_profile_model.dart';
 import '../models/medical_record_model.dart';
+import '../models/blood_cancer_ehr_model.dart';
 
 class DoctorService {
   final _db = FirebaseFirestore.instance;
@@ -13,6 +14,9 @@ class DoctorService {
   CollectionReference get _users        => _db.collection('users');
   CollectionReference get _patients     => _db.collection('patients');
   CollectionReference get _consents     => _db.collection('doctor_patient_consents');
+
+  CollectionReference _patientBloodCancerEhrs(String patientId) =>
+      _db.collection('patients').doc(patientId).collection('blood_cancer_ehrs');
 
   CollectionReference _diagnoses(String uid) =>
       _db.collection('doctors').doc(uid).collection('diagnoses');
@@ -518,6 +522,82 @@ class DoctorService {
         .collection('ehr_vitals').doc(patientId).get();
     if (!doc.exists) return {};
     return doc.data() as Map<String, dynamic>;
+  }
+
+  // ── Blood Cancer EHR Methods ─────────────────────────────────
+  /// Save or update a Blood Cancer EHR record in /patients/{patientId}/blood_cancer_ehrs/{recordId}
+  Future<BloodCancerEhrModel> saveBloodCancerEhr(BloodCancerEhrModel ehr) async {
+    final collection = _patientBloodCancerEhrs(ehr.patientId);
+    final docRef = ehr.recordId.isEmpty ? collection.doc() : collection.doc(ehr.recordId);
+    
+    final finalRecord = ehr.recordId.isEmpty ? ehr.copyWith(recordId: docRef.id) : ehr;
+    
+    final batch = _db.batch();
+    batch.set(docRef, finalRecord.toMap(), SetOptions(merge: true));
+
+    // Update patient profile active diagnosis / phase if specified
+    final pMap = <String, dynamic>{};
+    if (ehr.diagnosisSubtype?.isNotEmpty == true) {
+      pMap['activeDiagnosis'] = ehr.diagnosisSubtype;
+    }
+    if (ehr.stage?.isNotEmpty == true) {
+      pMap['diagnosisPhase'] = ehr.stage;
+    }
+    if (pMap.isNotEmpty) {
+      batch.set(_patients.doc(ehr.patientId), pMap, SetOptions(merge: true));
+    }
+
+    await batch.commit();
+    return finalRecord;
+  }
+
+  /// Stream of all Blood Cancer EHR records for a patient ordered chronologically descending
+  Stream<List<BloodCancerEhrModel>> watchBloodCancerEhrs(String patientId) {
+    return _patientBloodCancerEhrs(patientId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs
+            .map((d) => BloodCancerEhrModel.fromMap(
+                d.data() as Map<String, dynamic>,
+                docId: d.id))
+            .toList());
+  }
+
+  /// Fetch the latest Blood Cancer EHR record for a patient
+  Future<BloodCancerEhrModel?> fetchLatestBloodCancerEhr(String patientId) async {
+    final snap = await _patientBloodCancerEhrs(patientId)
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return BloodCancerEhrModel.fromMap(
+      snap.docs.first.data() as Map<String, dynamic>,
+      docId: snap.docs.first.id,
+    );
+  }
+
+  /// Fetch a specific Blood Cancer EHR record by ID
+  Future<BloodCancerEhrModel?> fetchBloodCancerEhr(String patientId, String recordId) async {
+    final doc = await _patientBloodCancerEhrs(patientId).doc(recordId).get();
+    if (!doc.exists) return null;
+    return BloodCancerEhrModel.fromMap(
+      doc.data() as Map<String, dynamic>,
+      docId: doc.id,
+    );
+  }
+
+  /// Stream of approved appointments across all doctors (used by Nurse workflow)
+  Stream<List<AppointmentModel>> watchApprovedAppointments() {
+    return _appointments
+        .where('status', isEqualTo: AppointmentStatus.approved.firestoreValue)
+        .snapshots()
+        .map((s) {
+      final list = s.docs
+          .map((d) => AppointmentModel.fromMap(d.data() as Map<String, dynamic>))
+          .toList();
+      list.sort((a, b) => a.appointmentDate.compareTo(b.appointmentDate));
+      return list;
+    });
   }
 
   // ── Helpers ───────────────────────────────────────────────────

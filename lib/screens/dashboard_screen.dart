@@ -7,6 +7,7 @@ import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'patient/patient_dashboard.dart';
 import 'doctor/doctor_dashboard.dart';
+import 'nurse/nurse_dashboard.dart';
 import 'profile_selection_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -28,7 +29,7 @@ class DashboardScreen extends StatelessWidget {
             doctorName: user!.name,
           );
         case 'nurse':
-          return _ComingSoon(role: 'Nurse / HO', user: user!);
+          return NurseDashboard(user: user!);
         case 'admin':
           return _ComingSoon(role: 'Admin', user: user!);
       }

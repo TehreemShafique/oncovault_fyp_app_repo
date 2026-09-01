@@ -10,6 +10,7 @@ import 'doctor_widgets.dart';
 import 'full_medical_history_screen.dart';
 import 'add_diagnosis_screen.dart';
 import 'prescription_screen.dart';
+import 'blood_cancer_ehr_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
   final String patientId, doctorId;
@@ -119,6 +120,78 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
                 Text('Stable', style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700, color: OV.tertiary)),
               ]),
             ])))),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 14)),
+
+        // ── Electronic Health Record (EHR) Action Card ─────────────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                dSlide(BloodCancerEhrScreen(
+                  patientId: widget.patientId,
+                  patientName: p.name,
+                  doctorId: widget.doctorId,
+                  doctorName: widget.doctorId,
+                )),
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: OV.slateDark,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.medical_information_rounded, color: Colors.white, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Open Patient EHR',
+                            style: GoogleFonts.manrope(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'View & update complete clinical records, CBC, and treatment',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: Colors.white.withOpacity(0.75),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 16),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
 
         const SliverToBoxAdapter(child: SizedBox(height: 14)),
 

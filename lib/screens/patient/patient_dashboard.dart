@@ -15,8 +15,8 @@ import 'book_appointment_screen.dart';
 import 'appointment_list_screen.dart';
 import 'medical_records_screen.dart';
 import 'notifications_screen.dart';
-// ADD this import at the top
-import '../../features/ehr/presentation/pages/ehr_dashboard.dart';
+import 'blood_cancer_summary_screen.dart';
+
 class PatientDashboard extends StatefulWidget {
   final String patientId;
   final String patientName;
@@ -55,8 +55,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
           ),
           AppointmentListScreen(patientId: widget.patientId, patientName: widget.patientName),
           BookAppointmentScreen(patientId: widget.patientId, patientName: widget.patientName),
-          // MedicalRecordsScreen(patientId: widget.patientId),
-          EhrDashboard(patientId: widget.patientId),
+          BloodCancerSummaryScreen(patientId: widget.patientId),
         ],
       ),
       bottomNavigationBar: _BottomNav(
