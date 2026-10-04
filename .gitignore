@@ -4,6 +4,11 @@
 *.pyc
 *.swp
 .DS_Store
+# Python artifacts
+**/__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
 .atom/
 .build/
 .buildlog/
