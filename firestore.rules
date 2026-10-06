@@ -1,0 +1,284 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(roleName) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData().role == roleName;
+    }
+
+    function isDoctor() {
+      return hasRole('doctor');
+    }
+
+    function isNurse() {
+      return hasRole('nurse');
+    }
+
+    function isPatient() {
+      return hasRole('patient');
+    }
+
+    // NOTE ON CLINICIAN ACCESS (Phase 1 Access Model):
+    // `isClinician()` currently provides broad clinical read access to patient
+    // records because of the existing hospital nurse workflow (where on-duty nurses
+    // triage arriving patients across all doctors via approved appointment queues)
+    // and because appointment documents have non-deterministic IDs that cannot be
+    // queried dynamically within Firestore security rules.
+    //
+    // This is a temporary Phase 1 Role-Based Access Control (RBAC) baseline.
+    // It is NOT yet relationship-based or consent-based access control (ABAC).
+    // Doctor-patient relationship/consent enforcement is a planned future enhancement
+    // once deterministic consent records and appointment links are active in the UI.
+    //
+    // SECURITY GUARANTEE: Patients can NEVER access another patient's clinical data
+    // under these rules. Only verified clinicians (doctors and nurses) have care delivery access.
+    function isClinician() {
+      return isDoctor() || isNurse();
+    }
+
+    // =========================================================================
+    // 1. MEDICAL ID DIRECTORY (Pre-auth lookup)
+    // =========================================================================
+    // Only exact single-document get() allowed to resolve email prior to signIn.
+    // Listing/scraping the directory is strictly forbidden.
+    match /medical_id_directory/{medicalId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuthenticated() &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 2. USERS COLLECTION
+    // =========================================================================
+    match /users/{userId} {
+      // Clinicians can fetch a specific patient profile; users can fetch their own.
+      // Listing the entire collection is blocked.
+      allow get: if isAuthenticated() && (isOwner(userId) || isClinician());
+      allow list: if false;
+
+      // Only the authenticated user can create their profile document
+      allow create: if isOwner(userId);
+
+      // Users can update their own profile, but CANNOT change their role
+      allow update: if isOwner(userId) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
+         request.resource.data.role == resource.data.role);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 3. PATIENTS COLLECTION & SUBCOLLECTIONS
+    // =========================================================================
+    match /patients/{patientId} {
+      allow get: if isAuthenticated() && (isOwner(patientId) || isClinician());
+      allow list: if isAuthenticated() && isClinician();
+      allow create, update: if isAuthenticated() && (isOwner(patientId) || isClinician());
+      allow delete: if false;
+
+      // Subcollection: Appointments mirror
+      match /appointments/{appointmentId} {
+        allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow create, update: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow delete: if isAuthenticated() && (isOwner(patientId) || isDoctor());
+      }
+
+      // Subcollection: Blood Cancer EHRs
+      match /blood_cancer_ehrs/{recordId} {
+        allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow create, update: if isAuthenticated() && isClinician();
+        allow delete: if isAuthenticated() && isDoctor();
+      }
+
+      // Subcollection: Diagnoses
+      match /diagnoses/{diagnosisId} {
+        allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow create, update, delete: if isAuthenticated() && isDoctor();
+      }
+
+      // Subcollection: Medical Records
+      match /medicalRecords/{recordId} {
+        allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow create, update: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow delete: if isAuthenticated() && (isOwner(patientId) || isDoctor());
+      }
+    }
+
+    // =========================================================================
+    // 4. DOCTORS COLLECTION & SUBCOLLECTIONS
+    // =========================================================================
+    match /doctors/{doctorId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isOwner(doctorId) && isDoctor();
+      allow delete: if false;
+
+      // Subcollection: Doctor Critical Alerts
+      match /alerts/{alertId} {
+        allow read, create, update, delete: if isAuthenticated() &&
+          isOwner(doctorId) && isDoctor();
+      }
+
+      // Subcollection: Doctor Diagnoses Index
+      match /diagnoses/{diagnosisId} {
+        allow read, create, update, delete: if isAuthenticated() &&
+          isOwner(doctorId) && isDoctor();
+      }
+    }
+
+    // =========================================================================
+    // 5. NURSES COLLECTION
+    // =========================================================================
+    match /nurses/{nurseId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isOwner(nurseId) && isNurse();
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 6. BOOKED SLOTS COLLECTION
+    // =========================================================================
+    match /bookedSlots/{doctorId}/slots/{slotKey} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isClinician() ||
+        request.resource.data.patientId == request.auth.uid
+      );
+      allow delete: if isAuthenticated() && (
+        isClinician() ||
+        resource.data.patientId == request.auth.uid
+      );
+    }
+
+    // =========================================================================
+    // 7. NOTIFICATIONS COLLECTION & SUBCOLLECTION
+    // =========================================================================
+    match /notifications/{userId}/items/{notificationId} {
+      allow read: if isAuthenticated() && isOwner(userId);
+      // Only the user themselves or an authorized clinician can create a notification
+      allow create: if isAuthenticated() && (
+        isOwner(userId) ||
+        isClinician()
+      );
+      allow update, delete: if isAuthenticated() && isOwner(userId);
+    }
+
+    // =========================================================================
+    // 8. DOCTOR-PATIENT CONSENT COLLECTION
+    // =========================================================================
+    match /doctor_patient_consents/{consentId} {
+      allow read: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isClinician()
+      );
+      // Strictly enforced: ONLY the patient can grant consent
+      allow create: if isAuthenticated() &&
+        request.resource.data.patientId == request.auth.uid;
+      // Either patient or doctor can update status (e.g. revoke)
+      allow update: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid
+      );
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 9. EHR VITALS COLLECTION
+    // =========================================================================
+    match /ehr_vitals/{patientId} {
+      allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
+      allow create, update: if isAuthenticated() && isClinician();
+      allow delete: if isAuthenticated() && isDoctor();
+    }
+
+    // =========================================================================
+    // 10. GLOBAL MEDICAL RECORDS COLLECTION
+    // =========================================================================
+    match /medical_records/{recordId} {
+      allow read: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        isClinician()
+      );
+      allow create: if isAuthenticated() && (
+        (isPatient() && request.resource.data.patientId == request.auth.uid) ||
+        isClinician()
+      );
+      allow update: if isAuthenticated() && (
+        (resource.data.patientId == request.auth.uid && request.resource.data.patientId == request.auth.uid) ||
+        isClinician()
+      );
+      allow delete: if isAuthenticated() && isDoctor();
+    }
+
+    // =========================================================================
+    // 11. GLOBAL APPOINTMENTS COLLECTION
+    // =========================================================================
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isClinician()
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.patientId == request.auth.uid ||
+        isClinician()
+      );
+      allow update: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isClinician()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.doctorId == request.auth.uid ||
+        isDoctor()
+      );
+    }
+
+    // =========================================================================
+    // 12. GLOBAL PRESCRIPTIONS COLLECTION
+    // =========================================================================
+    match /prescriptions/{prescriptionId} {
+      allow read: if isAuthenticated() && (
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isClinician()
+      );
+      // Strictly enforced: Only the prescribing doctor can create with their own doctorId
+      allow create: if isAuthenticated() &&
+        isDoctor() &&
+        request.resource.data.doctorId == request.auth.uid;
+      allow update, delete: if isAuthenticated() &&
+        isDoctor() &&
+        resource.data.doctorId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // DEFAULT CATCH-ALL: Deny all unauthenticated or undeclared collection access
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

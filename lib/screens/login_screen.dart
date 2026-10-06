@@ -185,14 +185,15 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       ])),
                       const SizedBox(height: 28),
 
-                      _Label('Medical ID'),
+                      _Label('Medical ID or Email'),
                       const SizedBox(height: 8),
                       TextFormField(
                           controller: _medIdCtrl,
-                          textCapitalization: TextCapitalization.characters,
+                          textCapitalization: TextCapitalization.none,
+                          keyboardType: TextInputType.emailAddress,
                           style: GoogleFonts.inter(fontSize: 15, color: OV.onSurface),
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your Medical ID' : null,
-                          decoration: _fieldDec('OV-PA-XXXXXX', Icons.badge_outlined)),
+                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your Medical ID or Email' : null,
+                          decoration: _fieldDec('OV-PA-XXXXXX or email', Icons.badge_outlined)),
 
                       const SizedBox(height: 18),
                       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [

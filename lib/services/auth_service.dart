@@ -40,6 +40,10 @@ class AuthService {
 
     await _db.collection('users').doc(uid).set(data);
     await _db.collection(_collectionForRole(role)).doc(uid).set(data);
+    await _db.collection('medical_id_directory').doc(medId).set({
+      'email': email.trim(),
+      'uid': uid,
+    });
     await cred.user!.updateDisplayName(name.trim());
     return user;
   }
@@ -48,25 +52,47 @@ class AuthService {
     required String medicalId,
     required String password,
   }) async {
-    final snap = await _db
-        .collection('users')
-        .where('medicalId', isEqualTo: medicalId.trim().toUpperCase())
-        .limit(1)
-        .get();
+    final input = medicalId.trim();
+    String email;
 
-    if (snap.docs.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'user-not-found',
-        message: 'No account found for Medical ID: $medicalId',
-      );
+    if (input.contains('@')) {
+      // Direct Email login bypasses directory lookup completely
+      email = input;
+    } else {
+      final lookupId = input.toUpperCase();
+      final lookupDoc = await _db.collection('medical_id_directory').doc(lookupId).get();
+      if (lookupDoc.exists && lookupDoc.data()?['email'] != null) {
+        email = lookupDoc.data()!['email'] as String;
+      } else {
+        // Under Phase 1A security rules, unauthenticated queries on /users are strictly blocked.
+        // Legacy accounts not yet indexed in medical_id_directory must authenticate via Email + Password,
+        // which automatically self-migrates their Medical ID mapping upon successful login.
+        throw FirebaseAuthException(
+          code: 'user-not-found',
+          message: 'Medical ID "$medicalId" not recognized. If this is an existing account, please sign in with your email address.',
+        );
+      }
     }
-    final email = snap.docs.first.data()['email'] as String;
+
     final cred  = await _auth.signInWithEmailAndPassword(
       email: email, password: password,
     );
     final userDoc = await _db.collection('users').doc(cred.user!.uid).get();
     if (!userDoc.exists) return null;
-    return OVUser.fromMap(userDoc.data()!);
+    final user = OVUser.fromMap(userDoc.data()!);
+
+    // Ensure medical_id_directory record exists for future Medical ID logins
+    if (user.medicalId.isNotEmpty) {
+      try {
+        final dirRef = _db.collection('medical_id_directory').doc(user.medicalId);
+        final dirDoc = await dirRef.get();
+        if (!dirDoc.exists) {
+          await dirRef.set({'email': user.email, 'uid': user.uid});
+        }
+      } catch (_) {}
+    }
+
+    return user;
   }
 
   Future<OVUser?> fetchProfile(String uid) async {
