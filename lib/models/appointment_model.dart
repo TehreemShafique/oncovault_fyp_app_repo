@@ -1,28 +1,60 @@
 // lib/models/appointment_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum AppointmentStatus { pending, approved, rejected, completed, cancelled, rescheduled }
+enum AppointmentStatus {
+  scheduled,
+  confirmed,
+  rescheduled,
+  cancelled,
+  completed,
+  rejected,
+}
 
 extension AppointmentStatusX on AppointmentStatus {
   String get label {
     switch (this) {
-      case AppointmentStatus.pending:     return 'Pending';
-      case AppointmentStatus.approved:    return 'Approved';
-      case AppointmentStatus.rejected:    return 'Rejected';
-      case AppointmentStatus.completed:   return 'Completed';
-      case AppointmentStatus.cancelled:   return 'Cancelled';
+      case AppointmentStatus.scheduled:   return 'Scheduled';
+      case AppointmentStatus.confirmed:   return 'Confirmed';
       case AppointmentStatus.rescheduled: return 'Rescheduled';
+      case AppointmentStatus.cancelled:   return 'Cancelled';
+      case AppointmentStatus.completed:   return 'Completed';
+      case AppointmentStatus.rejected:    return 'Rejected';
     }
   }
 
-  String get firestoreValue => name; // 'pending', 'approved', etc.
+  String get firestoreValue => name; // 'scheduled', 'confirmed', etc.
 }
 
-AppointmentStatus statusFromString(String s) {
-  return AppointmentStatus.values.firstWhere(
-        (e) => e.name == s,
-    orElse: () => AppointmentStatus.pending,
-  );
+AppointmentStatus statusFromString(String? s) {
+  if (s == null) return AppointmentStatus.scheduled;
+  switch (s.trim().toLowerCase()) {
+    case 'scheduled':
+    case 'pending':
+      return AppointmentStatus.scheduled;
+    case 'confirmed':
+    case 'approved':
+      return AppointmentStatus.confirmed;
+    case 'rescheduled':
+      return AppointmentStatus.rescheduled;
+    case 'cancelled':
+    case 'canceled':
+      return AppointmentStatus.cancelled;
+    case 'completed':
+      return AppointmentStatus.completed;
+    case 'rejected':
+      return AppointmentStatus.rejected;
+    default:
+      return AppointmentStatus.scheduled;
+  }
+}
+
+/// Canonical slot-key generator: YYYY-MM-DD_timeSlot
+String buildSlotKey(DateTime date, String timeSlot) {
+  final y = date.year.toString().padLeft(4, '0');
+  final m = date.month.toString().padLeft(2, '0');
+  final d = date.day.toString().padLeft(2, '0');
+  final slot = timeSlot.trim();
+  return '$y-$m-${d}_$slot';
 }
 
 class AppointmentModel {
@@ -42,6 +74,9 @@ class AppointmentModel {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final bool isCancellable;    // within 24h policy
+  final String? explicitSlotKey;
+
+  String get slotKey => explicitSlotKey ?? buildSlotKey(appointmentDate, timeSlot);
 
   AppointmentModel({
     required this.id,
@@ -60,6 +95,7 @@ class AppointmentModel {
     required this.createdAt,
     this.updatedAt,
     this.isCancellable = true,
+    this.explicitSlotKey,
   });
 
   Map<String, dynamic> toMap() => {
@@ -72,6 +108,7 @@ class AppointmentModel {
     'doctorImage':      doctorImage,
     'appointmentDate':  Timestamp.fromDate(appointmentDate),
     'timeSlot':         timeSlot,
+    'slotKey':          slotKey,
     'durationMinutes':  durationMinutes,
     'status':           status.firestoreValue,
     'notes':            notes,
@@ -92,12 +129,13 @@ class AppointmentModel {
     appointmentDate:  (m['appointmentDate'] as Timestamp).toDate(),
     timeSlot:         m['timeSlot'] ?? '',
     durationMinutes:  m['durationMinutes'] ?? 45,
-    status:           statusFromString(m['status'] ?? 'pending'),
+    status:           statusFromString(m['status']),
     notes:            m['notes'] ?? '',
     doctorNotes:      m['doctorNotes'] ?? '',
     createdAt:        (m['createdAt'] as Timestamp).toDate(),
     updatedAt:        m['updatedAt'] != null ? (m['updatedAt'] as Timestamp).toDate() : null,
     isCancellable:    m['isCancellable'] ?? true,
+    explicitSlotKey:  m['slotKey'] as String?,
   );
 
   AppointmentModel copyWith({
@@ -108,6 +146,7 @@ class AppointmentModel {
     String? timeSlot,
     DateTime? updatedAt,
     bool? isCancellable,
+    String? explicitSlotKey,
   }) => AppointmentModel(
     id: id, patientId: patientId, patientName: patientName,
     doctorId: doctorId, doctorName: doctorName, doctorSpecialty: doctorSpecialty,
@@ -121,5 +160,6 @@ class AppointmentModel {
     createdAt: createdAt,
     updatedAt: updatedAt ?? DateTime.now(),
     isCancellable: isCancellable ?? this.isCancellable,
+    explicitSlotKey: explicitSlotKey ?? this.explicitSlotKey,
   );
 }

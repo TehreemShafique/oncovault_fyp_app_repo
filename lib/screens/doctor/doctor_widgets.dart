@@ -11,8 +11,8 @@ class DStatusBadge extends StatelessWidget {
 
   Color get bg {
     switch (status) {
-      case AppointmentStatus.approved:    return OV.tertiaryContainer;
-      case AppointmentStatus.pending:     return const Color(0xFFFFF3E0);
+      case AppointmentStatus.confirmed:   return OV.tertiaryContainer;
+      case AppointmentStatus.scheduled:   return const Color(0xFFFFF3E0);
       case AppointmentStatus.cancelled:   return OV.errorContainer;
       case AppointmentStatus.rejected:    return OV.errorContainer;
       case AppointmentStatus.completed:   return OV.secondaryContainer;
@@ -21,8 +21,8 @@ class DStatusBadge extends StatelessWidget {
   }
   Color get fg {
     switch (status) {
-      case AppointmentStatus.approved:    return OV.tertiary;
-      case AppointmentStatus.pending:     return const Color(0xFF8B5000);
+      case AppointmentStatus.confirmed:   return OV.tertiary;
+      case AppointmentStatus.scheduled:   return const Color(0xFF8B5000);
       case AppointmentStatus.cancelled:   return OV.error;
       case AppointmentStatus.rejected:    return OV.error;
       case AppointmentStatus.completed:   return OV.secondary;

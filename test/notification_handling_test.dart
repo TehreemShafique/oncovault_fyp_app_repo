@@ -147,7 +147,7 @@ void main() {
         doctorSpecialty: 'Oncology',
         appointmentDate: DateTime.now(),
         timeSlot: '10:00 AM',
-        status: AppointmentStatus.approved,
+        status: AppointmentStatus.confirmed,
         createdAt: DateTime.now(),
       );
 
@@ -196,7 +196,7 @@ void main() {
         doctorSpecialty: 'Oncology',
         appointmentDate: DateTime.now(),
         timeSlot: '10:00 AM',
-        status: AppointmentStatus.approved,
+        status: AppointmentStatus.confirmed,
         createdAt: DateTime.now(),
       );
 
@@ -389,7 +389,7 @@ void main() {
         doctorSpecialty: 'Oncology',
         appointmentDate: DateTime.now(),
         timeSlot: '11:00 AM',
-        status: AppointmentStatus.pending,
+        status: AppointmentStatus.scheduled,
         createdAt: DateTime.now(),
       );
 
@@ -438,7 +438,7 @@ void main() {
         doctorSpecialty: 'Oncology',
         appointmentDate: DateTime.now(),
         timeSlot: '11:00 AM',
-        status: AppointmentStatus.pending,
+        status: AppointmentStatus.scheduled,
         createdAt: DateTime.now(),
       );
 

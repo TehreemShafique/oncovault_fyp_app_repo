@@ -23,20 +23,10 @@ class AppointmentService {
   CollectionReference _bookedSlots(String doctorId) =>
       _db.collection('bookedSlots').doc(doctorId).collection('slots');
 
-  // ── Slot Key Helper ───────────────────────────────────────────
-  // Produces a deterministic key from a date + time slot string.
-  // e.g. date=2025-06-15, slot="09:30 AM"  →  "2025-06-15_09:30 AM"
-  String _slotKey(DateTime date, String timeSlot) {
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return '${y}-${m}-${d}_$timeSlot';
-  }
-
   // ── Check if a slot is booked ─────────────────────────────────
   /// Returns true when the slot is already taken (approved appointment exists).
   Future<bool> isSlotBooked(String doctorId, DateTime date, String timeSlot) async {
-    final key = _slotKey(date, timeSlot);
+    final key = buildSlotKey(date, timeSlot);
     final doc = await _bookedSlots(doctorId).doc(key).get();
     return doc.exists;
   }
@@ -70,7 +60,7 @@ class AppointmentService {
       appointmentDate:  appointmentDate,
       timeSlot:         timeSlot,
       durationMinutes:  durationMinutes,
-      status:           AppointmentStatus.pending,
+      status:           AppointmentStatus.scheduled,
       notes:            notes,
       createdAt:        DateTime.now(),
     );
@@ -112,8 +102,8 @@ class AppointmentService {
     batch.update(_patientAppts(patientId).doc(appointmentId), data);
 
     // Free the booked slot if it was previously approved.
-    if (appt != null && appt.status == AppointmentStatus.approved && appt.doctorId.isNotEmpty) {
-      final key = _slotKey(appt.appointmentDate, appt.timeSlot);
+    if (appt != null && appt.status == AppointmentStatus.confirmed && appt.doctorId.isNotEmpty) {
+      final key = buildSlotKey(appt.appointmentDate, appt.timeSlot);
       batch.delete(_bookedSlots(appt.doctorId).doc(key));
     }
 
@@ -140,13 +130,13 @@ class AppointmentService {
     String doctorId = '',
     DateTime? oldDate,
     String oldTimeSlot = '',
-    AppointmentStatus oldStatus = AppointmentStatus.pending,
+    AppointmentStatus oldStatus = AppointmentStatus.scheduled,
   }) async {
     final data = {
       'appointmentDate': Timestamp.fromDate(newDate),
       'timeSlot':        newTimeSlot,
-      // Reset to PENDING — doctor must re-approve the new date/time.
-      'status':          AppointmentStatus.pending.firestoreValue,
+      // Reset to scheduled — doctor must re-approve the new date/time.
+      'status':          AppointmentStatus.scheduled.firestoreValue,
       'updatedAt':       Timestamp.now(),
     };
 
@@ -155,11 +145,11 @@ class AppointmentService {
     batch.update(_patientAppts(patientId).doc(appointmentId), data);
 
     // If the appointment was approved, release the old booked slot.
-    if (oldStatus == AppointmentStatus.approved &&
+    if (oldStatus == AppointmentStatus.confirmed &&
         doctorId.isNotEmpty &&
         oldDate != null &&
         oldTimeSlot.isNotEmpty) {
-      final oldKey = _slotKey(oldDate, oldTimeSlot);
+      final oldKey = buildSlotKey(oldDate, oldTimeSlot);
       batch.delete(_bookedSlots(doctorId).doc(oldKey));
     }
 

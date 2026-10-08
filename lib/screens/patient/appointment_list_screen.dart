@@ -68,10 +68,10 @@ class _AppointmentListScreenState extends State<AppointmentListScreen>
               return const Center(child: CircularProgressIndicator(color: OV.primary));
             }
             final all = snap.data ?? [];
-            // Upcoming: status-based so pending stays visible
+            // Upcoming: status-based so scheduled stays visible
             final upcoming = all.where((a) =>
-            a.status == AppointmentStatus.pending ||
-                a.status == AppointmentStatus.approved ||
+            a.status == AppointmentStatus.scheduled ||
+                a.status == AppointmentStatus.confirmed ||
                 a.status == AppointmentStatus.rescheduled).toList();
             final past = all.where((a) =>
             a.status == AppointmentStatus.completed ||
@@ -263,8 +263,8 @@ class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.status});
   Color get _bg {
     switch (status) {
-      case AppointmentStatus.approved:    return OV.tertiaryContainer;
-      case AppointmentStatus.pending:     return const Color(0xFFFFF3E0);
+      case AppointmentStatus.confirmed:   return OV.tertiaryContainer;
+      case AppointmentStatus.scheduled:   return const Color(0xFFFFF3E0);
       case AppointmentStatus.cancelled:   return OV.errorContainer;
       case AppointmentStatus.rejected:    return OV.errorContainer;
       case AppointmentStatus.completed:   return OV.secondaryContainer;
@@ -273,8 +273,8 @@ class _StatusBadge extends StatelessWidget {
   }
   Color get _fg {
     switch (status) {
-      case AppointmentStatus.approved:    return OV.tertiary;
-      case AppointmentStatus.pending:     return const Color(0xFF8B5000);
+      case AppointmentStatus.confirmed:   return OV.tertiary;
+      case AppointmentStatus.scheduled:   return const Color(0xFF8B5000);
       case AppointmentStatus.cancelled:   return OV.error;
       case AppointmentStatus.rejected:    return OV.error;
       case AppointmentStatus.completed:   return OV.secondary;

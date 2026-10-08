@@ -69,10 +69,10 @@ class _AppointmentRequestsScreenState extends State<AppointmentRequestsScreen>
                 final all = snap.data ?? [];
                 final now = DateTime.now();
                 // Pending stays in Pending tab regardless of date
-                final pending  = all.where((a) => a.status == AppointmentStatus.pending).toList();
-                // Upcoming = approved/rescheduled (status-based, not date-based)
+                final pending  = all.where((a) => a.status == AppointmentStatus.scheduled).toList();
+                // Upcoming = confirmed/rescheduled (status-based, not date-based)
                 final upcoming = all.where((a) =>
-                a.status == AppointmentStatus.approved ||
+                a.status == AppointmentStatus.confirmed ||
                     a.status == AppointmentStatus.rescheduled).toList();
                 // Past = only truly finished/cancelled/rejected
                 final past     = all.where((a) =>

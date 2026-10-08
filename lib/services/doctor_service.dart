@@ -36,13 +36,6 @@ class DoctorService {
   CollectionReference _bookedSlots(String doctorId) =>
       _db.collection('bookedSlots').doc(doctorId).collection('slots');
 
-  String _slotKey(DateTime date, String timeSlot) {
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return '${y}-${m}-${d}_$timeSlot';
-  }
-
   // ── Doctor Profile ────────────────────────────────────────────
   Future<DoctorModel?> fetchDoctor(String uid) async {
     try {
@@ -95,7 +88,7 @@ class DoctorService {
   Stream<List<AppointmentModel>> watchPendingAppointments(String doctorId) =>
       _appointments
           .where('doctorId', isEqualTo: doctorId)
-          .where('status',   isEqualTo: 'pending')
+          .where('status',   whereIn: ['scheduled', 'pending', 'rescheduled'])
           .snapshots()
           .map((s) {
         final list = s.docs
@@ -113,7 +106,7 @@ class DoctorService {
   // "Not Available" for any key that exists there.
   Future<void> approveAppointment(AppointmentModel appt) async {
     final data = {
-      'status'   : AppointmentStatus.approved.firestoreValue,
+      'status'   : AppointmentStatus.confirmed.firestoreValue,
       'updatedAt': Timestamp.now(),
     };
     final batch = _db.batch();
@@ -121,7 +114,7 @@ class DoctorService {
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
 
     // Mark this slot as booked so no other patient can select it.
-    final slotKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+    final slotKey = buildSlotKey(appt.appointmentDate, appt.timeSlot);
     batch.set(_bookedSlots(appt.doctorId).doc(slotKey), {
       'appointmentId': appt.id,
       'patientId'    : appt.patientId,
@@ -179,8 +172,8 @@ class DoctorService {
     final data = {
       'appointmentDate': Timestamp.fromDate(newDate),
       'timeSlot'       : newSlot,
-      // Reset to pending — the new time needs re-confirmation.
-      'status'         : AppointmentStatus.pending.firestoreValue,
+      // Reset to scheduled — the new time needs re-confirmation.
+      'status'         : AppointmentStatus.scheduled.firestoreValue,
       'updatedAt'      : Timestamp.now(),
     };
     final batch = _db.batch();
@@ -188,8 +181,8 @@ class DoctorService {
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
 
     // Free the old slot if the appointment was previously approved.
-    if (appt.status == AppointmentStatus.approved) {
-      final oldKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+    if (appt.status == AppointmentStatus.confirmed) {
+      final oldKey = buildSlotKey(appt.appointmentDate, appt.timeSlot);
       batch.delete(_bookedSlots(appt.doctorId).doc(oldKey));
     }
 
@@ -218,7 +211,7 @@ class DoctorService {
     batch.update(_patientAppts(appt.patientId).doc(appt.id), data);
 
     // Release the slot — appointment is over, no longer blocked.
-    final slotKey = _slotKey(appt.appointmentDate, appt.timeSlot);
+    final slotKey = buildSlotKey(appt.appointmentDate, appt.timeSlot);
     batch.delete(_bookedSlots(appt.doctorId).doc(slotKey));
 
     await batch.commit();
@@ -484,9 +477,9 @@ class DoctorService {
         .toList();
 
     final pending    = allAppts
-        .where((a) => a.status == AppointmentStatus.pending).length;
+        .where((a) => a.status == AppointmentStatus.scheduled).length;
     final approved   = allAppts
-        .where((a) => a.status == AppointmentStatus.approved).length;
+        .where((a) => a.status == AppointmentStatus.confirmed).length;
     final completed  = allAppts
         .where((a) => a.status == AppointmentStatus.completed).length;
     final patientIds = allAppts.map((a) => a.patientId).toSet().length;
@@ -512,7 +505,7 @@ class DoctorService {
           .snapshots()
           .map((s) => s.docs
           .map((d) => MedicalRecordModel.fromMap(
-          d.data() as Map<String, dynamic>))
+          d.data()))
           .toList());
 
   // ── EHR Vitals ────────────────────────────────────────────────
@@ -598,7 +591,7 @@ class DoctorService {
   /// Stream of approved appointments across all doctors (used by Nurse workflow)
   Stream<List<AppointmentModel>> watchApprovedAppointments() {
     return _appointments
-        .where('status', isEqualTo: AppointmentStatus.approved.firestoreValue)
+        .where('status', whereIn: ['confirmed', 'approved'])
         .snapshots()
         .map((s) {
       final list = s.docs

@@ -35,7 +35,7 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
     setState(() => _isLoading = true);
     await widget.service.approveAppointment(_appt);
     if (!mounted) return;
-    setState(() { _appt = _appt.copyWith(status: AppointmentStatus.approved); _isLoading = false; });
+    setState(() { _appt = _appt.copyWith(status: AppointmentStatus.confirmed); _isLoading = false; });
     _snack('Appointment approved ✓', OV.tertiary);
   }
 
@@ -214,7 +214,7 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator(color: OV.primary))
                   : Column(mainAxisSize: MainAxisSize.min, children: [
-                if (a.status == AppointmentStatus.pending) Row(children: [
+                if (a.status == AppointmentStatus.scheduled) Row(children: [
                   Expanded(child: OutlinedButton(
                       onPressed: _showReschedule,
                       style: OutlinedButton.styleFrom(foregroundColor: OV.primary,
@@ -230,7 +230,7 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
                           padding: const EdgeInsets.symmetric(vertical: 14)),
                       child: Text('Approve', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700)))),
                 ]),
-                if (a.status == AppointmentStatus.approved) ...[
+                if (a.status == AppointmentStatus.confirmed) ...[
                   SizedBox(
                     width: double.infinity,
                     height: 48,
@@ -269,7 +269,7 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
                     ),
                   ),
                 ],
-                if (a.status != AppointmentStatus.pending && a.status != AppointmentStatus.approved) ...[
+                if (a.status != AppointmentStatus.scheduled && a.status != AppointmentStatus.confirmed) ...[
                   SizedBox(
                     width: double.infinity,
                     height: 48,

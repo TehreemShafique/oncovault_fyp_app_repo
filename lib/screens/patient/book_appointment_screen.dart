@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../theme/app_theme.dart';
 import '../../services/appointment_service.dart';
+import '../../models/appointment_model.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
   final String patientId, patientName;
@@ -44,10 +45,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   // Returns true if this slot on the selected date is already taken.
   bool _isSlotBooked(String slot) {
     if (_selectedDate == null || _selectedDoctor == null) return false;
-    final y = _selectedDate!.year.toString().padLeft(4, '0');
-    final m = _selectedDate!.month.toString().padLeft(2, '0');
-    final d = _selectedDate!.day.toString().padLeft(2, '0');
-    final key = '${y}-${m}-${d}_$slot';
+    final key = buildSlotKey(_selectedDate!, slot);
     return _bookedSlotKeys.contains(key);
   }
 

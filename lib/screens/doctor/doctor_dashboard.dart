@@ -709,9 +709,9 @@ class _AppointmentScheduleItem extends StatelessWidget {
 
   Color get _lineColor {
     switch (appt.status) {
-      case AppointmentStatus.approved:
+      case AppointmentStatus.confirmed:
         return OV.tertiary;
-      case AppointmentStatus.pending:
+      case AppointmentStatus.scheduled:
         return const Color(0xFF8B5000);
       case AppointmentStatus.rescheduled:
         return OV.primary;
