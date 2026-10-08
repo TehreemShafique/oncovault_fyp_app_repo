@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
+import 'notification_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -45,6 +46,9 @@ class AuthService {
       'uid': uid,
     });
     await cred.user!.updateDisplayName(name.trim());
+    try {
+      await NotificationService().registerCurrentDeviceToken();
+    } catch (_) {}
     return user;
   }
 
@@ -92,6 +96,10 @@ class AuthService {
       } catch (_) {}
     }
 
+    try {
+      await NotificationService().registerCurrentDeviceToken();
+    } catch (_) {}
+
     return user;
   }
 
@@ -101,5 +109,10 @@ class AuthService {
     return OVUser.fromMap(doc.data()!);
   }
 
-  Future<void> signOut() => _auth.signOut();
+  Future<void> signOut() async {
+    try {
+      await NotificationService().deleteCurrentDeviceToken();
+    } catch (_) {}
+    await _auth.signOut();
+  }
 }

@@ -87,6 +87,11 @@ service cloud.firestore {
          request.resource.data.role == resource.data.role);
 
       allow delete: if false;
+
+      // Subcollection: Device Tokens (Phase 1B FCM Infrastructure)
+      match /deviceTokens/{tokenId} {
+        allow read, create, update, delete: if isAuthenticated() && isOwner(userId);
+      }
     }
 
     // =========================================================================

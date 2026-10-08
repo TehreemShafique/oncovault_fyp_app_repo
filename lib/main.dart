@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'firebase_options.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,9 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Initialize NotificationService
+  NotificationService().initialize();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -28,6 +32,7 @@ class OncoVaultApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: NotificationService.navigatorKey,
       title: 'OncoVault',
       debugShowCheckedModeBanner: false,
       theme: OV.theme,

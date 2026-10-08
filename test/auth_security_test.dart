@@ -125,6 +125,7 @@ void main() {
       expect(content.contains('match /doctor_patient_consents/{consentId}'), isTrue);
       expect(content.contains('match /bookedSlots/{doctorId}/slots/{slotKey}'), isTrue);
       expect(content.contains('match /prescriptions/{prescriptionId}'), isTrue);
+      expect(content.contains('match /deviceTokens/{tokenId}'), isTrue);
 
       // Catch-all denial
       expect(content.contains('match /{document=**}'), isTrue);
