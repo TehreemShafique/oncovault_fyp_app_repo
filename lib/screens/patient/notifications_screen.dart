@@ -4,7 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/medical_record_model.dart';
+import '../../models/notification_payload.dart';
 import '../../services/appointment_service.dart';
+import '../../services/notification_router.dart';
 
 class NotificationsScreen extends StatelessWidget {
   final String patientId;
@@ -160,7 +162,11 @@ class _NotifCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-      onTap: () => service.markNotificationRead(patientId, notif.id),
+      onTap: () async {
+        await service.markNotificationRead(patientId, notif.id);
+        final payload = AppNotificationPayload.fromNotificationModel(notif);
+        NotificationRouter.route(payload);
+      },
       child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           margin: const EdgeInsets.only(bottom: 10),

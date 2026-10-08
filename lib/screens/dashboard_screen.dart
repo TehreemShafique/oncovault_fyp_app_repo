@@ -9,29 +9,54 @@ import 'patient/patient_dashboard.dart';
 import 'doctor/doctor_dashboard.dart';
 import 'nurse/nurse_dashboard.dart';
 import 'profile_selection_screen.dart';
+import '../services/notification_service.dart';
+import '../services/notification_router.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   final OVUser? user;
   const DashboardScreen({super.key, this.user});
 
   @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.user != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkColdStartNotification();
+      });
+    }
+  }
+
+  void _checkColdStartNotification() {
+    final payload = NotificationService().consumeInitialAppPayload();
+    if (payload != null) {
+      NotificationRouter.route(payload);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final user = widget.user;
     if (user != null) {
-      switch (user!.role) {
+      switch (user.role) {
         case 'patient':
           return PatientDashboard(
-            patientId:   user!.uid,
-            patientName: user!.name,
+            patientId:   user.uid,
+            patientName: user.name,
           );
         case 'doctor':
           return DoctorDashboard(
-            doctorId:   user!.uid,
-            doctorName: user!.name,
+            doctorId:   user.uid,
+            doctorName: user.name,
           );
         case 'nurse':
-          return NurseDashboard(user: user!);
+          return NurseDashboard(user: user);
         case 'admin':
-          return _ComingSoon(role: 'Admin', user: user!);
+          return _ComingSoon(role: 'Admin', user: user);
       }
     }
     return _ComingSoon(role: 'User', user: user);

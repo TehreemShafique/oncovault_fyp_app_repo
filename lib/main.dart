@@ -5,6 +5,7 @@ import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'firebase_options.dart';
 import 'services/notification_service.dart';
+import 'services/notification_coordinator.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +18,9 @@ void main() async {
 
   // Initialize NotificationService
   NotificationService().initialize();
+
+  // Initialize NotificationCoordinator
+  NotificationCoordinator.initialize();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

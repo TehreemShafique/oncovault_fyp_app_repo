@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../models/device_token_model.dart';
+import '../models/notification_payload.dart';
 
 /// Top-level background message handler required by FlutterFire.
 /// Executes in a background isolate when an FCM message arrives while the app is in
@@ -111,14 +112,27 @@ class NotificationService {
   bool _isInitialized = false;
 
   FcmMessagePayload? _initialMessagePayload;
+  AppNotificationPayload? _initialAppPayload;
 
   /// Cached payload from an FCM notification that launched the application from a terminated state, if any.
   FcmMessagePayload? get initialMessagePayload => _initialMessagePayload;
+
+  /// Cached AppNotificationPayload from launch notification, if any.
+  AppNotificationPayload? get initialAppPayload => _initialAppPayload;
 
   /// Consumes and clears the cached initial notification launch payload.
   /// Prevents double-processing when the initial route or UI layer handles the launch event.
   FcmMessagePayload? consumeInitialMessagePayload() {
     final payload = _initialMessagePayload;
+    _initialMessagePayload = null;
+    _initialAppPayload = null;
+    return payload;
+  }
+
+  /// Consumes and clears the cached initial AppNotificationPayload.
+  AppNotificationPayload? consumeInitialAppPayload() {
+    final payload = _initialAppPayload;
+    _initialAppPayload = null;
     _initialMessagePayload = null;
     return payload;
   }
@@ -129,6 +143,12 @@ class NotificationService {
   final StreamController<FcmMessagePayload> _notificationTapController =
       StreamController<FcmMessagePayload>.broadcast();
 
+  final StreamController<AppNotificationPayload> _appForegroundController =
+      StreamController<AppNotificationPayload>.broadcast();
+
+  final StreamController<AppNotificationPayload> _appTapController =
+      StreamController<AppNotificationPayload>.broadcast();
+
   /// Stream emitting incoming foreground FCM messages parsed safely into [FcmMessagePayload].
   Stream<FcmMessagePayload> get onForegroundMessage =>
       _foregroundMessageController.stream;
@@ -136,6 +156,14 @@ class NotificationService {
   /// Stream emitting notification tap events (from background resume or handled launch).
   Stream<FcmMessagePayload> get onNotificationTap =>
       _notificationTapController.stream;
+
+  /// Stream emitting incoming foreground FCM messages parsed into [AppNotificationPayload].
+  Stream<AppNotificationPayload> get onAppForegroundNotification =>
+      _appForegroundController.stream;
+
+  /// Stream emitting notification tap events parsed into [AppNotificationPayload].
+  Stream<AppNotificationPayload> get onAppNotificationTap =>
+      _appTapController.stream;
 
   /// Whether the notification service has completed its initialization setup.
   bool get isInitialized => _isInitialized;
@@ -180,9 +208,17 @@ class NotificationService {
         if (initialMessage != null) {
           final payload = FcmMessagePayload.fromRemoteMessage(initialMessage);
           _initialMessagePayload = payload;
+          final appPayload = AppNotificationPayload.fromRemoteMessage(
+            initialMessage,
+            source: NotificationSource.fcmColdStart,
+          );
+          _initialAppPayload = appPayload;
           debugPrint('FCM launch notification received: messageId=${payload.messageId ?? "none"}');
           if (!_notificationTapController.isClosed) {
             _notificationTapController.add(payload);
+          }
+          if (!_appTapController.isClosed) {
+            _appTapController.add(appPayload);
           }
         }
       } catch (_) {
@@ -343,9 +379,16 @@ class NotificationService {
         FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       try {
         final payload = FcmMessagePayload.fromRemoteMessage(message);
+        final appPayload = AppNotificationPayload.fromRemoteMessage(
+          message,
+          source: NotificationSource.fcmForeground,
+        );
         debugPrint('FCM foreground message received: messageId=${payload.messageId ?? "none"}');
         if (!_foregroundMessageController.isClosed) {
           _foregroundMessageController.add(payload);
+        }
+        if (!_appForegroundController.isClosed) {
+          _appForegroundController.add(appPayload);
         }
       } catch (_) {
         // Fail-safe: message parsing error must never crash the active application
@@ -365,9 +408,16 @@ class NotificationService {
         FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       try {
         final payload = FcmMessagePayload.fromRemoteMessage(message);
+        final appPayload = AppNotificationPayload.fromRemoteMessage(
+          message,
+          source: NotificationSource.fcmTap,
+        );
         debugPrint('FCM notification tap received (background resume): messageId=${payload.messageId ?? "none"}');
         if (!_notificationTapController.isClosed) {
           _notificationTapController.add(payload);
+        }
+        if (!_appTapController.isClosed) {
+          _appTapController.add(appPayload);
         }
       } catch (_) {
         // Fail-safe: tap event processing error must never crash the application
@@ -408,8 +458,15 @@ class NotificationService {
   @visibleForTesting
   void handleForegroundMessageForTesting(RemoteMessage message) {
     final payload = FcmMessagePayload.fromRemoteMessage(message);
+    final appPayload = AppNotificationPayload.fromRemoteMessage(
+      message,
+      source: NotificationSource.fcmForeground,
+    );
     if (!_foregroundMessageController.isClosed) {
       _foregroundMessageController.add(payload);
+    }
+    if (!_appForegroundController.isClosed) {
+      _appForegroundController.add(appPayload);
     }
   }
 
@@ -417,9 +474,17 @@ class NotificationService {
   @visibleForTesting
   void handleNotificationTapForTesting(RemoteMessage message) {
     final payload = FcmMessagePayload.fromRemoteMessage(message);
+    final appPayload = AppNotificationPayload.fromRemoteMessage(
+      message,
+      source: NotificationSource.fcmTap,
+    );
     _initialMessagePayload = payload;
+    _initialAppPayload = appPayload;
     if (!_notificationTapController.isClosed) {
       _notificationTapController.add(payload);
+    }
+    if (!_appTapController.isClosed) {
+      _appTapController.add(appPayload);
     }
   }
 
@@ -427,6 +492,12 @@ class NotificationService {
   @visibleForTesting
   void setInitialMessagePayloadForTesting(FcmMessagePayload? payload) {
     _initialMessagePayload = payload;
+  }
+
+  /// Sets the initial AppNotificationPayload directly for testing purposes.
+  @visibleForTesting
+  void setInitialAppPayloadForTesting(AppNotificationPayload? payload) {
+    _initialAppPayload = payload;
   }
 
   /// Disposes active stream subscriptions and resets initialization state.
@@ -438,6 +509,7 @@ class NotificationService {
     _messageOpenedAppSubscription?.cancel();
     _messageOpenedAppSubscription = null;
     _initialMessagePayload = null;
+    _initialAppPayload = null;
     _isInitialized = false;
   }
 }

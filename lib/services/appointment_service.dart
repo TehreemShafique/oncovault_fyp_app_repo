@@ -260,6 +260,16 @@ class MedicalRecordService {
     await ref.set(record.toMap());
   }
 
+  Future<MedicalRecordModel?> getRecord(String patientId, String recordId) async {
+    try {
+      final doc = await _records(patientId).doc(recordId).get();
+      if (!doc.exists) return null;
+      return MedicalRecordModel.fromMap(doc.data() as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Seed sample records for a new patient (called after signup)
   Future<void> seedSampleRecords(String patientId, String patientName) async {
     final now = DateTime.now();
