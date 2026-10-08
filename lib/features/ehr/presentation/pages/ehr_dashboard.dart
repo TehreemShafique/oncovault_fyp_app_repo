@@ -127,7 +127,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
 
     setState(() => _uploading = true);
     try {
-      await _repo.uploadAndSaveRecord(
+      final record = await _repo.uploadAndSaveRecord(
         patientId : widget.patientId,
         file      : file,
         title     : title.trim(),
@@ -136,6 +136,13 @@ class _EhrDashboardState extends State<EhrDashboard> {
         fileType  : fileType,
         subtype   : 'CBC',
         summary   : 'Uploaded by doctor via OncoVault EHR',
+      );
+      await _service.sendPatientNotification(
+        patientId  : widget.patientId,
+        title      : 'New Report Available',
+        body       : 'A new medical report has been added to your records.',
+        type       : 'report',
+        referenceId: record.id,
       );
       await _loadAll();
       if (mounted) _showSnack('✅ Report uploaded & hashed', success: true);

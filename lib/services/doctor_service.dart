@@ -222,6 +222,14 @@ class DoctorService {
     batch.delete(_bookedSlots(appt.doctorId).doc(slotKey));
 
     await batch.commit();
+
+    await _sendPatientNotification(
+      patientId  : appt.patientId,
+      title      : 'Appointment Completed',
+      body       : 'Your appointment has been marked as completed.',
+      type       : 'appointment',
+      referenceId: appt.id,
+    );
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -377,10 +385,11 @@ class DoctorService {
     await batch.commit();
 
     await _sendPatientNotification(
-      patientId: entry.patientId,
-      title    : 'New Diagnosis Added',
-      body     : '${entry.doctorName} added: ${entry.diagnosisTitle}.',
-      type     : 'report',
+      patientId  : entry.patientId,
+      title      : 'New Diagnosis Added',
+      body       : '${entry.doctorName} added: ${entry.diagnosisTitle}.',
+      type       : 'report',
+      referenceId: ref.id,
     );
   }
 
@@ -601,7 +610,7 @@ class DoctorService {
   }
 
   // ── Helpers ───────────────────────────────────────────────────
-  Future<void> _sendPatientNotification({
+  Future<void> sendPatientNotification({
     required String patientId,
     required String title,
     required String body,
@@ -619,6 +628,20 @@ class DoctorService {
       referenceId: referenceId,
     ).toMap());
   }
+
+  Future<void> _sendPatientNotification({
+    required String patientId,
+    required String title,
+    required String body,
+    required String type,
+    String? referenceId,
+  }) => sendPatientNotification(
+    patientId  : patientId,
+    title      : title,
+    body       : body,
+    type       : type,
+    referenceId: referenceId,
+  );
 
   String _fmt(DateTime d) => '${d.day}/${d.month}/${d.year}';
 

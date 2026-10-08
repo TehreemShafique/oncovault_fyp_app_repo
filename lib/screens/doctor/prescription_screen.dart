@@ -314,7 +314,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
         'type':        'report',
         'isRead':      false,
         'createdAt':   Timestamp.fromDate(now),
-        'referenceId': ref.id,
+        'referenceId': recRef.id,
       });
 
       if (!mounted) return;
