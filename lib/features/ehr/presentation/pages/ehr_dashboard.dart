@@ -1176,7 +1176,7 @@ class _VitalsGrid extends StatelessWidget {
     ];
 
     return GridView.count(
-      crossAxisCount  : 4,
+      crossAxisCount  : 2,
       shrinkWrap      : true,
       physics         : const NeverScrollableScrollPhysics(),
       childAspectRatio: 1.85,
