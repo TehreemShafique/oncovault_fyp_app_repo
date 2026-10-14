@@ -946,5 +946,191 @@ void main() {
         returnsNormally,
       );
     });
+
+    test(
+        '33. DoctorService.isStatusEligibleForCompletion accepts confirmed and approved with case-insensitivity and whitespace',
+        () {
+      expect(DoctorService.isStatusEligibleForCompletion('confirmed'), isTrue);
+      expect(DoctorService.isStatusEligibleForCompletion('CONFIRMED'), isTrue);
+      expect(
+          DoctorService.isStatusEligibleForCompletion('  confirmed  '), isTrue);
+      expect(DoctorService.isStatusEligibleForCompletion('approved'), isTrue);
+      expect(DoctorService.isStatusEligibleForCompletion('APPROVED'), isTrue);
+      expect(
+          DoctorService.isStatusEligibleForCompletion('  approved  '), isTrue);
+    });
+
+    test(
+        '34. DoctorService.isStatusEligibleForCompletion rejects non-confirmed, terminal, empty, null, and unknown statuses',
+        () {
+      // Non-confirmed active / pending statuses
+      expect(DoctorService.isStatusEligibleForCompletion('scheduled'), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('pending'), isFalse);
+      expect(
+          DoctorService.isStatusEligibleForCompletion('rescheduled'), isFalse);
+
+      // Terminal statuses
+      expect(DoctorService.isStatusEligibleForCompletion('cancelled'), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('canceled'), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('rejected'), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('completed'), isFalse);
+
+      // Null, empty, whitespace-only, and unrecognized
+      expect(DoctorService.isStatusEligibleForCompletion(null), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion(''), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('   '), isFalse);
+      expect(
+          DoctorService.isStatusEligibleForCompletion('in_progress'), isFalse);
+      expect(DoctorService.isStatusEligibleForCompletion('unknown'), isFalse);
+    });
+
+    test(
+        '35. DoctorService.markAppointmentComplete rejects empty appointment id with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: '   ',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.confirmed,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.markAppointmentComplete(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('id'),
+        )),
+      );
+    });
+
+    test(
+        '36. DoctorService.markAppointmentComplete rejects empty doctorId with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_1',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: '   ',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.confirmed,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.markAppointmentComplete(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('doctorId'),
+        )),
+      );
+    });
+
+    test(
+        '37. DoctorService.markAppointmentComplete rejects empty patientId with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_1',
+        patientId: '   ',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.confirmed,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.markAppointmentComplete(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('patientId'),
+        )),
+      );
+    });
+
+    test(
+        '38. DoctorService.markAppointmentComplete fails closed when unauthenticated',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_auth_test',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.confirmed,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.markAppointmentComplete(appt),
+        throwsA(isA<AppointmentUnauthorizedException>()
+            .having(
+              (e) => e.appointmentId,
+              'appointmentId',
+              equals('appt_auth_test'),
+            )
+            .having(
+              (e) => e.message,
+              'message',
+              contains('Doctor completion requires an authenticated session.'),
+            )),
+      );
+    });
+
+    test(
+        '39. DoctorService.markAppointmentComplete rejects authenticated doctor UID mismatch before database interaction',
+        () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doctor_A'));
+      final service = DoctorService(auth: fakeAuth);
+      final appt = AppointmentModel(
+        id: 'appt_mismatch_test',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_B',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.confirmed,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.markAppointmentComplete(appt),
+        throwsA(isA<AppointmentUnauthorizedException>()
+            .having(
+              (e) => e.appointmentId,
+              'appointmentId',
+              equals('appt_mismatch_test'),
+            )
+            .having(
+              (e) => e.message,
+              'message',
+              contains(
+                  'Authenticated doctor UID does not match the appointment doctor ID.'),
+            )),
+      );
+    });
   });
 }
