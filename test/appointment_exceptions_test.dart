@@ -1132,5 +1132,239 @@ void main() {
             )),
       );
     });
+
+    test(
+        '40. DoctorService.isStatusEligibleForRejection accepts scheduled, pending, and rescheduled with case-insensitivity and whitespace',
+        () {
+      expect(DoctorService.isStatusEligibleForRejection('scheduled'), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('SCHEDULED'), isTrue);
+      expect(
+          DoctorService.isStatusEligibleForRejection('  scheduled  '), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('pending'), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('PENDING'), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('  pending  '), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('rescheduled'), isTrue);
+      expect(DoctorService.isStatusEligibleForRejection('RESCHEDULED'), isTrue);
+      expect(
+          DoctorService.isStatusEligibleForRejection('  rescheduled  '), isTrue);
+    });
+
+    test(
+        '41. DoctorService.isStatusEligibleForRejection rejects confirmed, approved, cancelled, canceled, completed, rejected, terminal, empty, null, and unknown statuses',
+        () {
+      // Confirmed & approved
+      expect(DoctorService.isStatusEligibleForRejection('confirmed'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('CONFIRMED'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('approved'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('APPROVED'), isFalse);
+
+      // Terminal statuses
+      expect(DoctorService.isStatusEligibleForRejection('cancelled'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('canceled'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('completed'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('rejected'), isFalse);
+
+      // Null, empty, whitespace-only, and unrecognized
+      expect(DoctorService.isStatusEligibleForRejection(null), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection(''), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('   '), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('in_progress'), isFalse);
+      expect(DoctorService.isStatusEligibleForRejection('unknown'), isFalse);
+    });
+
+    test(
+        '42. DoctorService.canonicalStatus maps status aliases and distinguishes non-equivalent states',
+        () {
+      // Equivalent mappings
+      expect(
+        DoctorService.canonicalStatus('scheduled'),
+        equals(DoctorService.canonicalStatus('pending')),
+      );
+      expect(
+        DoctorService.canonicalStatus('confirmed'),
+        equals(DoctorService.canonicalStatus('approved')),
+      );
+      expect(
+        DoctorService.canonicalStatus('cancelled'),
+        equals(DoctorService.canonicalStatus('canceled')),
+      );
+
+      // Distinct non-equivalent states
+      expect(
+        DoctorService.canonicalStatus('scheduled'),
+        isNot(equals(DoctorService.canonicalStatus('rescheduled'))),
+      );
+      expect(
+        DoctorService.canonicalStatus('pending'),
+        isNot(equals(DoctorService.canonicalStatus('rescheduled'))),
+      );
+      expect(
+        DoctorService.canonicalStatus('scheduled'),
+        isNot(equals(DoctorService.canonicalStatus('confirmed'))),
+      );
+      expect(
+        DoctorService.canonicalStatus('scheduled'),
+        isNot(equals(DoctorService.canonicalStatus('rejected'))),
+      );
+
+      // Other canonical values
+      expect(DoctorService.canonicalStatus('completed'), equals('completed'));
+      expect(DoctorService.canonicalStatus('rejected'), equals('rejected'));
+
+      // Invalids return null
+      expect(DoctorService.canonicalStatus(null), isNull);
+      expect(DoctorService.canonicalStatus(''), isNull);
+      expect(DoctorService.canonicalStatus('   '), isNull);
+      expect(DoctorService.canonicalStatus('unknown'), isNull);
+    });
+
+    test(
+        '43. DoctorService.rejectAppointment rejects empty appointment id with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: '   ',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.scheduled,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.rejectAppointment(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('id'),
+        )),
+      );
+    });
+
+    test(
+        '44. DoctorService.rejectAppointment rejects empty doctorId with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_1',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: '   ',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.scheduled,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.rejectAppointment(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('doctorId'),
+        )),
+      );
+    });
+
+    test(
+        '45. DoctorService.rejectAppointment rejects empty patientId with AppointmentPayloadConflictException',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_1',
+        patientId: '   ',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.scheduled,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.rejectAppointment(appt),
+        throwsA(isA<AppointmentPayloadConflictException>().having(
+          (e) => e.field,
+          'field',
+          equals('patientId'),
+        )),
+      );
+    });
+
+    test(
+        '46. DoctorService.rejectAppointment fails closed when unauthenticated',
+        () async {
+      final service = DoctorService();
+      final appt = AppointmentModel(
+        id: 'appt_auth_test',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_1',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.scheduled,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.rejectAppointment(appt),
+        throwsA(isA<AppointmentUnauthorizedException>()
+            .having(
+              (e) => e.appointmentId,
+              'appointmentId',
+              equals('appt_auth_test'),
+            )
+            .having(
+              (e) => e.message,
+              'message',
+              contains('Doctor rejection requires an authenticated session.'),
+            )),
+      );
+    });
+
+    test(
+        '47. DoctorService.rejectAppointment rejects authenticated doctor UID mismatch before database interaction',
+        () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doctor_A'));
+      final service = DoctorService(auth: fakeAuth);
+      final appt = AppointmentModel(
+        id: 'appt_mismatch_test',
+        patientId: 'patient_1',
+        patientName: 'Patient 1',
+        doctorId: 'doctor_B',
+        doctorName: 'Dr. One',
+        doctorSpecialty: 'Oncology',
+        appointmentDate: DateTime(2026, 11, 20),
+        timeSlot: '09:30 AM',
+        status: AppointmentStatus.scheduled,
+        createdAt: DateTime.now(),
+      );
+
+      expect(
+        () => service.rejectAppointment(appt),
+        throwsA(isA<AppointmentUnauthorizedException>()
+            .having(
+              (e) => e.appointmentId,
+              'appointmentId',
+              equals('appt_mismatch_test'),
+            )
+            .having(
+              (e) => e.message,
+              'message',
+              contains(
+                  'Authenticated doctor UID does not match the appointment doctor ID.'),
+            )),
+      );
+    });
   });
 }
