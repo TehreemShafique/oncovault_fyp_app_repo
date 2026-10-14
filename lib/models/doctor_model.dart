@@ -1,5 +1,6 @@
 // lib/models/doctor_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'doctor_availability_model.dart';
 
 class DoctorModel {
   final String uid;
@@ -19,6 +20,15 @@ class DoctorModel {
   final List<String> availableSlots;
   final bool isAvailable;
   final DateTime createdAt;
+  final DoctorAvailability? _explicitAvailability;
+
+  DoctorAvailability get availability =>
+      _explicitAvailability ??
+      DoctorAvailability.fromDoctorData({
+        'availableDays': availableDays,
+        'availableSlots': availableSlots,
+        'isAvailable': isAvailable,
+      });
 
   DoctorModel({
     required this.uid,
@@ -40,8 +50,9 @@ class DoctorModel {
       '01:30 PM', '03:00 PM', '04:30 PM',
     ],
     this.isAvailable = true,
+    DoctorAvailability? availability,
     required this.createdAt,
-  });
+  }) : _explicitAvailability = availability;
 
   Map<String, dynamic> toMap() => {
     'uid':             uid,
@@ -61,6 +72,9 @@ class DoctorModel {
     'availableSlots':  availableSlots,
     'isAvailable':     isAvailable,
     'createdAt':       Timestamp.fromDate(createdAt),
+    if (_explicitAvailability != null &&
+        _explicitAvailability!.state == DoctorAvailabilityState.structured)
+      'availability': _explicitAvailability!.toMap(),
   };
 
   factory DoctorModel.fromMap(Map<String, dynamic> m) => DoctorModel(
@@ -80,6 +94,9 @@ class DoctorModel {
     availableDays:   List<String>.from(m['availableDays'] ?? []),
     availableSlots:  List<String>.from(m['availableSlots'] ?? []),
     isAvailable:     m['isAvailable'] ?? true,
+    availability:    m.containsKey('availability')
+        ? DoctorAvailability.fromDoctorData(m)
+        : null,
     createdAt:       m['createdAt'] != null
         ? (m['createdAt'] as Timestamp).toDate()
         : DateTime.now(),
@@ -91,6 +108,7 @@ class DoctorModel {
     String? profileImageUrl, String? licenseNumber,
     List<String>? qualifications, List<String>? availableDays,
     List<String>? availableSlots, bool? isAvailable,
+    DoctorAvailability? availability,
   }) => DoctorModel(
     uid: uid, name: name, email: email, medicalId: medicalId,
     specialty: specialty ?? this.specialty,
@@ -105,6 +123,7 @@ class DoctorModel {
     availableDays: availableDays ?? this.availableDays,
     availableSlots: availableSlots ?? this.availableSlots,
     isAvailable: isAvailable ?? this.isAvailable,
+    availability: availability ?? _explicitAvailability,
     createdAt: createdAt,
   );
 }
