@@ -1,0 +1,26 @@
+{
+  "name": "oncovault-chaincode",
+  "version": "1.1.0",
+  "description": "OncoVault Hyperledger Fabric Smart Contract for Record Integrity and Consent Management",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "fabric-chaincode-node start",
+    "test": "mocha test/**/*.test.js --reporter spec --timeout 5000"
+  },
+  "engineStrict": true,
+  "author": "OncoVault FYP Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "fabric-contract-api": "^2.5.4",
+    "fabric-shim": "^2.5.4"
+  },
+  "devDependencies": {
+    "chai": "^4.4.1",
+    "mocha": "^10.4.0",
+    "sinon": "^18.0.0",
+    "sinon-chai": "^3.7.0"
+  }
+}
