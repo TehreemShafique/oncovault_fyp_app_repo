@@ -1,6 +1,7 @@
 // test/appointment_exceptions_test.dart
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:oncovault/models/appointment_model.dart';
 import 'package:oncovault/services/appointment_exceptions.dart';
 import 'package:oncovault/services/appointment_service.dart';
@@ -1364,6 +1365,232 @@ void main() {
               contains(
                   'Authenticated doctor UID does not match the appointment doctor ID.'),
             )),
+      );
+    });
+  });
+
+  group('Phase 2D.2A Cloud Functions Callable & Exception Mapping Tests', () {
+    final testDate = DateTime(2026, 10, 20);
+    final validAppt = AppointmentModel(
+      id: 'appt_fn_1',
+      patientId: 'patient_fn',
+      patientName: 'Test Patient',
+      doctorId: 'doc_trusted',
+      doctorName: 'Dr. Trusted',
+      doctorSpecialty: 'Oncology',
+      appointmentDate: testDate,
+      timeSlot: '09:30 AM',
+      status: AppointmentStatus.scheduled,
+      createdAt: DateTime.now(),
+    );
+
+    test('48. DoctorAvailabilityException captures appointmentId and reason', () {
+      const ex = DoctorAvailabilityException(
+        'Doctor is not available at requested slot.',
+        appointmentId: 'appt_fn_avail',
+        reason: 'Slot 2026-10-20_09:30 AM is blocked',
+      );
+
+      expect(ex, isA<AppointmentException>());
+      expect(ex.appointmentId, equals('appt_fn_avail'));
+      expect(ex.reason, equals('Slot 2026-10-20_09:30 AM is blocked'));
+      expect(ex.toString(), contains('not available'));
+    });
+
+    test('49. DoctorService.approveAppointment successfully calls injected callable', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      bool callableInvoked = false;
+      String? invokedApptId;
+
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          callableInvoked = true;
+          invokedApptId = appointmentId;
+          return {
+            'success': true,
+            'appointmentId': appointmentId,
+            'status': 'confirmed',
+            'slotKey': '2026-10-20_09:30 AM',
+          };
+        },
+      );
+
+      await service.approveAppointment(validAppt);
+      expect(callableInvoked, isTrue);
+      expect(invokedApptId, equals('appt_fn_1'));
+    });
+
+    test('50. DoctorService.approveAppointment maps permission-denied to AppointmentUnauthorizedException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Caller is not authorized as a doctor.',
+            code: 'permission-denied',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<AppointmentUnauthorizedException>().having(
+          (e) => e.message,
+          'message',
+          contains('not authorized as a doctor'),
+        )),
+      );
+    });
+
+    test('51. DoctorService.approveAppointment maps not-found to AppointmentNotFoundException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Appointment document not found.',
+            code: 'not-found',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<AppointmentNotFoundException>().having(
+          (e) => e.message,
+          'message',
+          contains('not found'),
+        )),
+      );
+    });
+
+    test('52. DoctorService.approveAppointment maps already-exists to SlotAlreadyBookedException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Slot 2026-10-20_09:30 AM is already booked.',
+            code: 'already-exists',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<SlotAlreadyBookedException>().having(
+          (e) => e.slotKey,
+          'slotKey',
+          equals(validAppt.slotKey),
+        )),
+      );
+    });
+
+    test('53. DoctorService.approveAppointment maps mirror failure to AppointmentMirrorInconsistentException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Patient appointment mirror is inconsistent.',
+            code: 'failed-precondition',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<AppointmentMirrorInconsistentException>().having(
+          (e) => e.reason,
+          'reason',
+          contains('mirror is inconsistent'),
+        )),
+      );
+    });
+
+    test('54. DoctorService.approveAppointment maps corrupt lock to SlotLockCorruptException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Slot lock is corrupt or missing ownership.',
+            code: 'failed-precondition',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<SlotLockCorruptException>().having(
+          (e) => e.slotKey,
+          'slotKey',
+          equals(validAppt.slotKey),
+        )),
+      );
+    });
+
+    test('55. DoctorService.approveAppointment maps availability/expired to DoctorAvailabilityException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Requested slot 2026-10-20 09:30 AM has expired.',
+            code: 'failed-precondition',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<DoctorAvailabilityException>().having(
+          (e) => e.reason,
+          'reason',
+          contains('has expired'),
+        )),
+      );
+    });
+
+    test('56. DoctorService.approveAppointment maps status conflict to AppointmentStateConflictException', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw FirebaseFunctionsException(
+            message: 'Appointment is already confirmed.',
+            code: 'failed-precondition',
+          );
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<AppointmentStateConflictException>().having(
+          (e) => e.currentStatus,
+          'currentStatus',
+          equals('scheduled'),
+        )),
+      );
+    });
+
+    test('57. DoctorService.approveAppointment never falls back to client write when Cloud Function fails', () async {
+      final fakeAuth = _FakeAuth(_FakeUser('doc_trusted'));
+      final service = DoctorService(
+        auth: fakeAuth,
+        approveCallable: ({required String appointmentId}) async {
+          throw Exception('Backend network unreachable');
+        },
+      );
+
+      expect(
+        () => service.approveAppointment(validAppt),
+        throwsA(isA<AppointmentStateConflictException>().having(
+          (e) => e.message,
+          'message',
+          contains('Server approval failed'),
+        )),
       );
     });
   });

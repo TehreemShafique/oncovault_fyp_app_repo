@@ -1,0 +1,31 @@
+{
+  "name": "oncovault-functions",
+  "version": "1.0.0",
+  "description": "OncoVault Trusted Appointment Scheduling Cloud Functions",
+  "engines": {
+    "node": "22"
+  },
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "node ./node_modules/typescript/bin/tsc",
+    "watch": "node ./node_modules/typescript/bin/tsc -w",
+    "test": "node ./node_modules/jest/bin/jest.js --runInBand",
+    "test:rules": "node ./node_modules/jest/bin/jest.js --runInBand test/security_rules.test.ts",
+    "test:unit": "node ./node_modules/jest/bin/jest.js --runInBand test/approve_appointment.test.ts",
+    "test:integration": "node ./node_modules/jest/bin/jest.js --runInBand test/callable_integration.test.ts",
+    "test:endpoint": "node ./node_modules/jest/bin/jest.js --runInBand test/http_callable_endpoint.test.ts"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^5.1.1"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.10.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.2"
+  },
+  "private": true
+}

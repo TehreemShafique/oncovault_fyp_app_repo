@@ -98,3 +98,16 @@ class AppointmentPayloadConflictException extends AppointmentException {
     required this.actualValue,
   });
 }
+
+/// Thrown when the doctor is not available at the requested date/time slot,
+/// or when doctor availability configuration is unconfigured or invalid.
+class DoctorAvailabilityException extends AppointmentException {
+  final String appointmentId;
+  final String reason;
+
+  const DoctorAvailabilityException(
+    super.message, {
+    required this.appointmentId,
+    required this.reason,
+  });
+}
