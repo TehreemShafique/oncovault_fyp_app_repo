@@ -31,6 +31,14 @@ class HashingService {
     }
   }
 
+  /// Returns the SHA-256 hex string of raw [bytes].
+  /// Ensures binary byte streams (e.g. PDF/images) are hashed consistently
+  /// with file-level byte hashing.
+  String hashBytes(List<int> bytes) {
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
   /// Returns the SHA-256 hex string of a plain [text] string.
   /// Useful for hashing JSON payloads (CBC structured data).
   ///

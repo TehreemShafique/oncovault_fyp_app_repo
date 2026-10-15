@@ -111,3 +111,13 @@ class DoctorAvailabilityException extends AppointmentException {
     required this.reason,
   });
 }
+
+/// Thrown when updating doctor availability fails due to conflicts with existing confirmed appointments or validation errors.
+class DoctorScheduleConflictException extends AppointmentException {
+  final String reason;
+
+  const DoctorScheduleConflictException(
+    super.message, {
+    this.reason = '',
+  });
+}

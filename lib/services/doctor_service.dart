@@ -7,6 +7,7 @@ import '../models/appointment_model.dart';
 import '../models/patient_profile_model.dart';
 import '../models/medical_record_model.dart';
 import '../models/blood_cancer_ehr_model.dart';
+import '../models/doctor_availability_model.dart';
 import 'appointment_exceptions.dart';
 import 'appointment_service.dart';
 
@@ -14,21 +15,29 @@ typedef ApproveAppointmentCallable = Future<Map<String, dynamic>> Function({
   required String appointmentId,
 });
 
+typedef UpdateDoctorAvailabilityCallable = Future<Map<String, dynamic>> Function({
+  required Map<String, dynamic> availability,
+  bool? isAvailable,
+});
+
 class DoctorService {
   final FirebaseFirestore? _customDb;
   final FirebaseAuth? _customAuth;
   final FirebaseFunctions? _customFunctions;
   final ApproveAppointmentCallable? _customApproveCallable;
+  final UpdateDoctorAvailabilityCallable? _customUpdateAvailabilityCallable;
 
   DoctorService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
     ApproveAppointmentCallable? approveCallable,
+    UpdateDoctorAvailabilityCallable? updateAvailabilityCallable,
   })  : _customDb = firestore,
         _customAuth = auth,
         _customFunctions = functions,
-        _customApproveCallable = approveCallable;
+        _customApproveCallable = approveCallable,
+        _customUpdateAvailabilityCallable = updateAvailabilityCallable;
 
   FirebaseFirestore get _db => _customDb ?? FirebaseFirestore.instance;
   FirebaseAuth? get _safeAuth {
@@ -104,11 +113,68 @@ class DoctorService {
   }
 
   Future<void> updateDoctorProfile(DoctorModel doctor) async {
+    final data = Map<String, dynamic>.from(doctor.toMap())
+      ..remove('availability')
+      ..remove('scheduleRevision')
+      ..remove('availableDays')
+      ..remove('availableSlots');
     final batch = _db.batch();
-    batch.set(
-        _doctors.doc(doctor.uid), doctor.toMap(), SetOptions(merge: true));
-    batch.set(_users.doc(doctor.uid), doctor.toMap(), SetOptions(merge: true));
+    batch.set(_doctors.doc(doctor.uid), data, SetOptions(merge: true));
+    batch.set(_users.doc(doctor.uid), data, SetOptions(merge: true));
     await batch.commit();
+  }
+
+  /// Trusted Cloud Function update for doctor availability & working hours.
+  /// Enforces server-side validation, role verification, and protection against
+  /// invalidating existing confirmed appointments.
+  Future<void> updateDoctorAvailability({
+    required DoctorAvailability availability,
+    bool? isAvailable,
+  }) async {
+    final auth = _safeAuth;
+    final currentUserId = auth?.currentUser?.uid;
+    if (auth == null || currentUserId == null || currentUserId.trim().isEmpty) {
+      throw const AppointmentUnauthorizedException(
+        'Doctor availability updates require an authenticated session.',
+        appointmentId: '',
+      );
+    }
+
+    try {
+      if (_customUpdateAvailabilityCallable != null) {
+        await _customUpdateAvailabilityCallable!(
+          availability: availability.toMap(),
+          isAvailable: isAvailable,
+        );
+      } else {
+        final callable = _functions.httpsCallable('updateDoctorAvailability');
+        await callable.call<Map<String, dynamic>>({
+          'availability': availability.toMap(),
+          if (isAvailable != null) 'isAvailable': isAvailable,
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      _mapUpdateAvailabilityException(e);
+    } catch (e) {
+      if (e is AppointmentException) rethrow;
+      throw DoctorScheduleConflictException(
+        'Server update of doctor availability failed: $e',
+        reason: e.toString(),
+      );
+    }
+  }
+
+  Never _mapUpdateAvailabilityException(FirebaseFunctionsException e) {
+    final msg = e.message ?? e.toString();
+    switch (e.code) {
+      case 'unauthenticated':
+      case 'permission-denied':
+        throw AppointmentUnauthorizedException(msg, appointmentId: '');
+      case 'failed-precondition':
+      case 'invalid-argument':
+      default:
+        throw DoctorScheduleConflictException(msg, reason: msg);
+    }
   }
 
   // ── Appointments ──────────────────────────────────────────────

@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 
 const PROJECT_ID = 'demo-no-project';
 const FUNCTIONS_URL = 'http://127.0.0.1:5001/demo-no-project/us-central1/approveAppointment';
+const AVAILABILITY_URL = 'http://127.0.0.1:5001/demo-no-project/us-central1/updateDoctorAvailability';
 const AUTH_URL = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=fake-key';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
@@ -248,5 +249,75 @@ describe('Phase 2D.2A HTTP Callable Endpoint Wire Protocol Tests', () => {
     expect(body.error).toBeDefined();
     expect(body.error.status).toBe('FAILED_PRECONDITION');
     expect(body.error.message).toMatch(/already confirmed/);
+  });
+
+  // 6. updateDoctorAvailability: Unauthenticated requests rejected with 401
+  test('6. updateDoctorAvailability: Unauthenticated request over HTTP protocol is rejected with 401 UNAUTHENTICATED', async () => {
+    const resp = await fetch(AVAILABILITY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { availability: validAvailability } }),
+    });
+
+    expect(resp.status).toBe(401);
+    const body: any = await resp.json();
+    expect(body.error).toBeDefined();
+    expect(body.error.status).toBe('UNAUTHENTICATED');
+  });
+
+  // 7. updateDoctorAvailability: Patient caller rejected with 403
+  test('7. updateDoctorAvailability: Patient caller over HTTP protocol is rejected with 403 PERMISSION_DENIED', async () => {
+    const resp = await fetch(AVAILABILITY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${patientIdToken}`,
+      },
+      body: JSON.stringify({ data: { availability: validAvailability } }),
+    });
+
+    expect(resp.status).toBe(403);
+    const body: any = await resp.json();
+    expect(body.error).toBeDefined();
+    expect(body.error.status).toBe('PERMISSION_DENIED');
+  });
+
+  // 8. updateDoctorAvailability: Authenticated doctor updates schedule successfully
+  test('8. updateDoctorAvailability: Authenticated doctor updates schedule via HTTP wire protocol', async () => {
+    const docBefore = (await db.collection('doctors').doc(doctorUid).get()).data();
+    const prevRev = docBefore?.scheduleRevision || 1;
+
+    const updatedSchedule = {
+      slotDurationMinutes: 60,
+      weeklySchedule: validAvailability.weeklySchedule,
+      blockedDates: ['2026-12-31'],
+      blockedSlots: [],
+    };
+
+    const resp = await fetch(AVAILABILITY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${doctorIdToken}`,
+      },
+      body: JSON.stringify({
+        data: {
+          availability: updatedSchedule,
+          isAvailable: true,
+        },
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    const body: any = await resp.json();
+    expect(body.result).toBeDefined();
+    expect(body.result.success).toBe(true);
+    expect(body.result.doctorId).toBe(doctorUid);
+    expect(body.result.scheduleRevision).toBe(prevRev + 1);
+
+    const docAfter = (await db.collection('doctors').doc(doctorUid).get()).data();
+    expect(docAfter?.scheduleRevision).toBe(prevRev + 1);
+    expect(docAfter?.availability.slotDurationMinutes).toBe(60);
+    expect(docAfter?.availability.blockedDates).toContain('2026-12-31');
   });
 });

@@ -2,9 +2,10 @@
 
 import * as admin from 'firebase-admin';
 import { approveAppointmentHandler } from '../src/approve_appointment';
+import { updateDoctorAvailabilityHandler } from '../src/update_doctor_availability';
 import { buildSlotKey } from '../src/utils/time_utils';
 
-const PROJECT_ID = 'oncovault-integration-test';
+const PROJECT_ID = process.env.GCLOUD_PROJECT || 'demo-no-project';
 
 // Connect to Firestore Emulator if FIRESTORE_EMULATOR_HOST is set, or default
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
@@ -669,5 +670,224 @@ describe('Phase 2D.2A Callable Integration Tests (Real Firestore Transactions)',
     expect(slotAfter.data()?.bookedAt.toMillis()).toBe(completedTimestamp.toMillis());
 
     await cleanAppointment(apptId, patientUid, doctorUid, slotKey);
+  });
+
+  // 17. Doctor updates availability via trusted Cloud Function in real Firestore transaction
+  test('Scenario 17: Doctor updates schedule through updateDoctorAvailabilityHandler inside real Firestore transaction', async () => {
+    const docBefore = (await db.collection('doctors').doc(doctorUid).get()).data();
+    const prevRev = docBefore?.scheduleRevision || 1;
+
+    const newAvailability = {
+      slotDurationMinutes: 30,
+      weeklySchedule: {
+        monday: { enabled: true, startTime: '08:30', endTime: '16:30' },
+        tuesday: { enabled: true, startTime: '08:30', endTime: '16:30' },
+        wednesday: { enabled: true, startTime: '08:30', endTime: '16:30' },
+        thursday: { enabled: true, startTime: '08:30', endTime: '16:30' },
+        friday: { enabled: true, startTime: '08:30', endTime: '16:30' },
+        saturday: { enabled: false, startTime: '09:00', endTime: '17:00' },
+        sunday: { enabled: false, startTime: '09:00', endTime: '17:00' },
+      },
+      blockedDates: ['2026-11-15'],
+      blockedSlots: ['2026-10-21_10:00 AM'],
+    };
+
+    const result = await updateDoctorAvailabilityHandler(
+      {
+        auth: { uid: doctorUid },
+        data: { availability: newAvailability, isAvailable: true },
+      },
+      db
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.doctorId).toBe(doctorUid);
+    expect(result.scheduleRevision).toBe(prevRev + 1);
+
+    const docAfter = (await db.collection('doctors').doc(doctorUid).get()).data();
+    expect(docAfter?.scheduleRevision).toBe(prevRev + 1);
+    expect(docAfter?.availability.slotDurationMinutes).toBe(30);
+    expect(docAfter?.availability.blockedDates).toContain('2026-11-15');
+    expect(docAfter?.availability.blockedSlots).toContain('2026-10-21_10:00 AM');
+    expect(docAfter?.availableDays).toContain('Mon');
+    expect(docAfter?.availableDays).toContain('Fri');
+    expect(docAfter?.availableSlots).toContain('08:30 AM');
+  });
+
+  // 18. Non-doctor caller fails closed without modifying doctor profile or revision
+  test('Scenario 18: Non-doctor caller fails closed without modifying doctor profile or revision', async () => {
+    const docBefore = (await db.collection('doctors').doc(doctorUid).get()).data();
+    const prevRev = docBefore?.scheduleRevision;
+
+    await expect(
+      updateDoctorAvailabilityHandler(
+        {
+          auth: { uid: patientUid }, // Patient trying to update
+          data: {
+            availability: validAvailability,
+          },
+        },
+        db
+      )
+    ).rejects.toThrow(/not authorized as a doctor/);
+
+    const docAfter = (await db.collection('doctors').doc(doctorUid).get()).data();
+    expect(docAfter?.scheduleRevision).toBe(prevRev);
+    expect(docAfter?.availability.slotDurationMinutes).toBe(docBefore?.availability.slotDurationMinutes);
+  });
+
+  // 19. Concurrency guard: confirmed appointments cannot be invalidated by schedule updates
+  test('Scenario 19: Confirmed appointments cannot be invalidated by changing weekdays, hours, or blocking', async () => {
+    // 1. Seed a confirmed appointment slot for Tuesday 2026-10-20 at 09:00 AM
+    const confirmedSlotKey = '2026-10-20_09:00 AM';
+    await db
+      .collection('bookedSlots')
+      .doc(doctorUid)
+      .collection('slots')
+      .doc(confirmedSlotKey)
+      .set({
+        appointmentId: 'appt_concurrency_guard',
+        patientId: patientUid,
+        date: '2026-10-20',
+        time: '09:00 AM',
+        status: 'confirmed',
+        bookedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    const docBefore = (await db.collection('doctors').doc(doctorUid).get()).data();
+    const prevRev = docBefore?.scheduleRevision;
+
+    // Attempt A: Block the confirmed date (2026-10-20)
+    await expect(
+      updateDoctorAvailabilityHandler(
+        {
+          auth: { uid: doctorUid },
+          data: {
+            availability: {
+              ...validAvailability,
+              blockedDates: ['2026-10-20'],
+            },
+          },
+        },
+        db
+      )
+    ).rejects.toThrow(/Cannot block date 2026-10-20/);
+
+    // Attempt B: Block the confirmed slot (2026-10-20_09:00 AM)
+    await expect(
+      updateDoctorAvailabilityHandler(
+        {
+          auth: { uid: doctorUid },
+          data: {
+            availability: {
+              ...validAvailability,
+              blockedSlots: [confirmedSlotKey],
+            },
+          },
+        },
+        db
+      )
+    ).rejects.toThrow(/Cannot block slot 2026-10-20_09:00 AM/);
+
+    // Attempt C: Disable Tuesday
+    await expect(
+      updateDoctorAvailabilityHandler(
+        {
+          auth: { uid: doctorUid },
+          data: {
+            availability: {
+              ...validAvailability,
+              weeklySchedule: {
+                ...validAvailability.weeklySchedule,
+                tuesday: { enabled: false, startTime: '09:00', endTime: '17:00' },
+              },
+            },
+          },
+        },
+        db
+      )
+    ).rejects.toThrow(/Cannot disable tuesday/);
+
+    // Attempt D: Change hours so that 09:00 AM falls outside (e.g. 10:00 to 17:00)
+    await expect(
+      updateDoctorAvailabilityHandler(
+        {
+          auth: { uid: doctorUid },
+          data: {
+            availability: {
+              ...validAvailability,
+              weeklySchedule: {
+                ...validAvailability.weeklySchedule,
+                tuesday: { enabled: true, startTime: '10:00', endTime: '17:00' },
+              },
+            },
+          },
+        },
+        db
+      )
+    ).rejects.toThrow(/falls outside new working hours/);
+
+    // Verify state was NOT modified by any of the failed transactions
+    const docAfter = (await db.collection('doctors').doc(doctorUid).get()).data();
+    expect(docAfter?.scheduleRevision).toBe(prevRev);
+    expect(docAfter?.availability.slotDurationMinutes).toBe(docBefore?.availability.slotDurationMinutes);
+
+    // Clean up confirmed slot
+    await db
+      .collection('bookedSlots')
+      .doc(doctorUid)
+      .collection('slots')
+      .doc(confirmedSlotKey)
+      .delete();
+  });
+
+  // 20. Concurrent transactions do not overwrite each other
+  test('Scenario 20: Concurrent appointment approval and schedule update both commit safely', async () => {
+    const apptId = 'scen_20_concurrent_appt';
+    // Use Thursday 09:00 AM for approval
+    const thursdayDate = new Date('2026-10-22T04:00:00Z');
+    await seedAppointment(apptId, {
+      appointmentDate: thursdayDate,
+      timeSlot: '09:00 AM',
+    });
+
+    const docBefore = (await db.collection('doctors').doc(doctorUid).get()).data();
+    const prevRev = docBefore?.scheduleRevision;
+
+    // Schedule update that does NOT conflict with Thursday 09:00 AM (changes duration to 45 min, blocks a different date)
+    const safeSchedule = {
+      slotDurationMinutes: 45,
+      weeklySchedule: validAvailability.weeklySchedule,
+      blockedDates: ['2026-11-20'],
+      blockedSlots: [],
+    };
+
+    // Execute concurrently
+    const [approvalResult, availResult] = await Promise.all([
+      approveAppointmentHandler(
+        { auth: { uid: doctorUid }, data: { appointmentId: apptId } },
+        db
+      ),
+      updateDoctorAvailabilityHandler(
+        { auth: { uid: doctorUid }, data: { availability: safeSchedule } },
+        db
+      ),
+    ]);
+
+    expect(approvalResult.success).toBe(true);
+    expect(availResult.success).toBe(true);
+
+    // The scheduleRevision should have incremented twice: once by approval, once by availability update
+    const docAfter = (await db.collection('doctors').doc(doctorUid).get()).data();
+    expect(docAfter?.scheduleRevision).toBe(prevRev + 2);
+
+    // Verify appointment was confirmed
+    const apptAfter = (await db.collection('appointments').doc(apptId).get()).data();
+    expect(apptAfter?.status).toBe('confirmed');
+
+    // Verify schedule update took effect
+    expect(docAfter?.availability.blockedDates).toContain('2026-11-20');
+
+    await cleanAppointment(apptId, patientUid, doctorUid, '2026-10-22_09:00 AM');
   });
 });

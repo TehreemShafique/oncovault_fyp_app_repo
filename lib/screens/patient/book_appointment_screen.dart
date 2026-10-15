@@ -5,7 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../theme/app_theme.dart';
 import '../../services/appointment_service.dart';
-import '../../models/appointment_model.dart';
+import '../../models/doctor_availability_model.dart';
+import '../../utils/slot_generator.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
   final String patientId, patientName;
@@ -32,21 +33,124 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
   List<DateTime> get _calendarDays {
     final first = DateTime(_focusedMonth.year, _focusedMonth.month, 1);
-    final last  = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0);
     final start = first.subtract(Duration(days: first.weekday % 7));
     return List.generate(42, (i) => start.add(Duration(days: i)));
   }
 
-  List<String> get _morningSlots   => ['08:00 AM', '09:30 AM', '11:00 AM'];
-  List<String> get _afternoonSlots => ['01:30 PM', '03:00 PM', '04:30 PM'];
+  String _formatDateKey(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
 
-  List<String> get _availableSlots => _selectedDoctor?.availableSlots ?? [];
+  bool _isDateAvailable(DateTime day) {
+    if (_selectedDoctor == null) return true;
+    final avail = _selectedDoctor!.availability;
+    if (!_selectedDoctor!.isAvailable) return false;
+    if (avail.state == DoctorAvailabilityState.unconfigured ||
+        avail.state == DoctorAvailabilityState.invalid) {
+      return false;
+    }
+    final dateKey = _formatDateKey(day);
+    if (avail.blockedDates.contains(dateKey)) return false;
+    if (avail.state == DoctorAvailabilityState.legacy) {
+      const legacyMap = {
+        DateTime.monday: 'Mon',
+        DateTime.tuesday: 'Tue',
+        DateTime.wednesday: 'Wed',
+        DateTime.thursday: 'Thu',
+        DateTime.friday: 'Fri',
+        DateTime.saturday: 'Sat',
+        DateTime.sunday: 'Sun',
+      };
+      final abbr = legacyMap[day.weekday];
+      return abbr != null && avail.legacyDays.contains(abbr);
+    } else {
+      final s = avail.weeklySchedule.getDay(day.weekday);
+      return s.enabled;
+    }
+  }
 
-  // Returns true if this slot on the selected date is already taken.
+  List<String> get _currentDaySlots {
+    if (_selectedDoctor == null || _selectedDate == null) return const [];
+    final avail = _selectedDoctor!.availability;
+    if (!_selectedDoctor!.isAvailable) return const [];
+    if (avail.state == DoctorAvailabilityState.unconfigured ||
+        avail.state == DoctorAvailabilityState.invalid) {
+      return const [];
+    }
+
+    final dateKey = _formatDateKey(_selectedDate!);
+    if (avail.blockedDates.contains(dateKey)) return const [];
+
+    List<String> rawSlots;
+    if (avail.state == DoctorAvailabilityState.legacy) {
+      rawSlots = avail.legacySlots;
+    } else {
+      final daySchedule = avail.weeklySchedule.getDay(_selectedDate!.weekday);
+      if (!daySchedule.enabled) return const [];
+      rawSlots = SlotGenerator.generateSlots(
+        daySchedule,
+        avail.slotDurationMinutes,
+      );
+    }
+
+    return rawSlots.where((slot) {
+      return SlotGenerator.isSlotValid(
+        date: _selectedDate!,
+        timeSlot: slot,
+        availability: avail,
+        isDoctorAvailable: _selectedDoctor!.isAvailable,
+      );
+    }).toList();
+  }
+
+  List<String> get _morningSlots => _currentDaySlots.where((slot) {
+        final m = SlotGenerator.parse12Hour(slot);
+        return m != null && m < 720;
+      }).toList();
+
+  List<String> get _afternoonSlots => _currentDaySlots.where((slot) {
+        final m = SlotGenerator.parse12Hour(slot);
+        return m != null && m >= 720;
+      }).toList();
+
+  // Returns true if this slot on the selected date is reserved or overlaps an existing booked interval.
   bool _isSlotBooked(String slot) {
     if (_selectedDate == null || _selectedDoctor == null) return false;
-    final key = buildSlotKey(_selectedDate!, slot);
-    return _bookedSlotKeys.contains(key);
+    final dateKey = _formatDateKey(_selectedDate!);
+    final slotKey = '${dateKey}_$slot';
+
+    // 1. Direct slotKey match in booked slots
+    if (_bookedSlotKeys.contains(slotKey)) return true;
+
+    // 2. Blocked slot check in availability
+    if (_selectedDoctor!.availability.blockedSlots.contains(slotKey)) return true;
+
+    // 3. Overlapping interval detection against all booked slots on that date
+    final candidateInterval = AppointmentInterval.fromSlot(
+      dateKey,
+      slot,
+      _selectedDoctor!.availability.slotDurationMinutes,
+    );
+    if (candidateInterval == null) return true;
+
+    for (final bookedKey in _bookedSlotKeys) {
+      if (bookedKey.startsWith('${dateKey}_')) {
+        final bookedTime = bookedKey.substring(dateKey.length + 1);
+        final bookedInterval = AppointmentInterval.fromSlot(
+          dateKey,
+          bookedTime,
+          _selectedDoctor!.availability.slotDurationMinutes,
+        );
+        if (bookedInterval != null && candidateInterval.overlaps(bookedInterval)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   // ── Doctor selection ──────────────────────────────────────────
@@ -151,10 +255,8 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
           specialty:       data['specialty'] ?? 'Specialist',
           experienceYears: data['experienceYears'] ?? 0,
           badge:           data['subSpecialty'] ?? '',
-          availableSlots:  List<String>.from(data['availableSlots'] ?? [
-            '08:00 AM', '09:30 AM', '11:00 AM',
-            '01:30 PM', '03:00 PM', '04:30 PM',
-          ]),
+          availability:    DoctorAvailability.fromDoctorData(data),
+          isAvailable:     (data['isAvailable'] ?? true) == true,
         );
       }).toList();
       if (mounted) setState(() { _doctors = docs; _loadingDoctors = false; });
@@ -279,11 +381,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                             day.year == _selectedDate!.year &&
                             day.month == _selectedDate!.month &&
                             day.day == _selectedDate!.day;
-                        final isToday = day.year == DateTime.now().year &&
-                            day.month == DateTime.now().month && day.day == DateTime.now().day;
-                        final isPast = day.isBefore(DateTime.now().subtract(const Duration(days: 1)));
+                        final now = DateTime.now();
+                        final todayMidnight = DateTime(now.year, now.month, now.day);
+                        final dayMidnight = DateTime(day.year, day.month, day.day);
+                        final isToday = dayMidnight == todayMidnight;
+                        final isPast = dayMidnight.isBefore(todayMidnight);
+                        final isDateAvail = _isDateAvailable(day);
+                        final isTappable = !isPast && isCurrentMonth && isDateAvail;
+
                         return GestureDetector(
-                            onTap: isPast || !isCurrentMonth ? null : () =>
+                            onTap: !isTappable ? null : () =>
                                 setState(() { _selectedDate = day; _selectedSlot = null; }),
                             child: Container(
                                 margin: const EdgeInsets.all(2),
@@ -296,7 +403,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                                         fontWeight: isSelected || isToday ? FontWeight.w700 : FontWeight.w400,
                                         color: isSelected ? Colors.white
                                             : isToday ? OV.primary
-                                            : !isCurrentMonth || isPast ? OV.outlineVariant
+                                            : !isCurrentMonth || isPast || !isDateAvail ? OV.outlineVariant
                                             : OV.onSurface)))));
                       }).toList()),
                 ])),
@@ -308,45 +415,90 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               Text('Available Time Slots', style: GoogleFonts.manrope(
                   fontSize: 16, fontWeight: FontWeight.w700, color: OV.onSurface)),
               const SizedBox(height: 4),
-              // Legend
-              Row(children: [
-                _LegendDot(color: OV.slateDark),
-                const SizedBox(width: 4),
-                Text('Selected', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
-                const SizedBox(width: 14),
-                _LegendDot(color: OV.errorContainer, border: OV.error.withOpacity(0.4)),
-                const SizedBox(width: 4),
-                Text('Not Available', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
-              ]),
-              const SizedBox(height: 12),
-              _SlotSection(
-                  label: 'Morning Sessions',
-                  slots: _morningSlots.where((s) => _availableSlots.contains(s) || _selectedDoctor == null).toList(),
-                  selectedSlot: _selectedSlot,
-                  bookedChecker: _isSlotBooked,
-                  onSelect: (s) {
-                    if (_isSlotBooked(s)) return; // ignore taps on booked slots
-                    setState(() => _selectedSlot = s);
-                  }),
-              const SizedBox(height: 16),
-              _SlotSection(
-                  label: 'Afternoon Sessions',
-                  slots: _afternoonSlots.where((s) => _availableSlots.contains(s) || _selectedDoctor == null).toList(),
-                  selectedSlot: _selectedSlot,
-                  bookedChecker: _isSlotBooked,
-                  onSelect: (s) {
-                    if (_isSlotBooked(s)) return;
-                    setState(() => _selectedSlot = s);
-                  }),
-              const SizedBox(height: 16),
-              Row(children: [
-                Icon(Icons.timer_outlined, size: 14, color: OV.outline),
-                const SizedBox(width: 6),
-                Text('Session Duration', style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant)),
-                const SizedBox(width: 8),
-                Text('45 Minutes Consultation', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: OV.onSurface)),
-              ]),
-              const SizedBox(height: 20),
+              if (!_isDateAvailable(_selectedDate!)) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Dr. ${_selectedDoctor?.name ?? 'The doctor'} is unavailable on this date. Please choose another date.',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: OV.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ] else if (_currentDaySlots.isEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'No consultation slots available for this date. All slots may have passed or the schedule is unconfigured.',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: OV.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ] else ...[
+                // Legend
+                Row(children: [
+                  const _LegendDot(color: OV.slateDark),
+                  const SizedBox(width: 4),
+                  Text('Selected', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+                  const SizedBox(width: 14),
+                  _LegendDot(color: OV.errorContainer, border: OV.error.withValues(alpha: 0.4)),
+                  const SizedBox(width: 4),
+                  Text('Not Available', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+                ]),
+                const SizedBox(height: 12),
+                if (_morningSlots.isNotEmpty) ...[
+                  _SlotSection(
+                      label: 'Morning Sessions',
+                      slots: _morningSlots,
+                      selectedSlot: _selectedSlot,
+                      bookedChecker: _isSlotBooked,
+                      onSelect: (s) {
+                        if (_isSlotBooked(s)) return;
+                        setState(() => _selectedSlot = s);
+                      }),
+                  const SizedBox(height: 16),
+                ],
+                if (_afternoonSlots.isNotEmpty) ...[
+                  _SlotSection(
+                      label: 'Afternoon & Evening Sessions',
+                      slots: _afternoonSlots,
+                      selectedSlot: _selectedSlot,
+                      bookedChecker: _isSlotBooked,
+                      onSelect: (s) {
+                        if (_isSlotBooked(s)) return;
+                        setState(() => _selectedSlot = s);
+                      }),
+                  const SizedBox(height: 16),
+                ],
+                Row(children: [
+                  const Icon(Icons.timer_outlined, size: 14, color: OV.outline),
+                  const SizedBox(width: 6),
+                  Text('Session Duration', style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant)),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_selectedDoctor?.availability.slotDurationMinutes ?? 45} Minutes Consultation',
+                    style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: OV.onSurface),
+                  ),
+                ]),
+                const SizedBox(height: 20),
+              ],
             ],
 
             // ── Notes ─────────────────────────────────────────────
@@ -423,11 +575,16 @@ class _LegendDot extends StatelessWidget {
 class _RealDoctor {
   final String id, name, specialty, badge;
   final int experienceYears;
-  final List<String> availableSlots;
+  final DoctorAvailability availability;
+  final bool isAvailable;
   _RealDoctor({
-    required this.id, required this.name, required this.specialty,
-    required this.badge, required this.experienceYears,
-    required this.availableSlots,
+    required this.id,
+    required this.name,
+    required this.specialty,
+    required this.badge,
+    required this.experienceYears,
+    required this.availability,
+    required this.isAvailable,
   });
 }
 

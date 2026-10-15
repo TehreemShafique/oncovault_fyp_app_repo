@@ -6,6 +6,7 @@ import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
 import '../../services/auth_service.dart';
 import 'doctor_widgets.dart';
+import 'doctor_availability_sheet.dart';
 import '../profile_selection_screen.dart';
 
 class DoctorProfileScreen extends StatefulWidget {
@@ -76,6 +77,8 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
           SliverToBoxAdapter(child: _buildStatsRow(d)),
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
           SliverToBoxAdapter(child: _buildInfoCard(d)),
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          SliverToBoxAdapter(child: _buildAvailabilityCard(context, d)),
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
           SliverToBoxAdapter(child: _buildSettingsSection()),
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
@@ -182,6 +185,182 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
               value: d.qualifications.join(', ')),
         ],
       ])));
+
+  Widget _buildAvailabilityCard(BuildContext context, DoctorModel d) {
+    final avail = d.availability;
+    final isAccepting = d.isAvailable;
+    final duration = avail.slotDurationMinutes;
+    final activeDays = <String>[];
+    for (final day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']) {
+      final s = avail.weeklySchedule.days[day];
+      if (s != null && s.enabled) {
+        activeDays.add('${day.substring(0, 3).toUpperCase()} (${s.startTime}–${s.endTime})');
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Availability & Schedule',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: OV.onSurface,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showAvailabilitySheet(context, d),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: OV.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.tune_rounded, size: 14, color: OV.primary),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Manage',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: OV.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          DCard(
+            onTap: () => _showAvailabilitySheet(context, d),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: isAccepting ? OV.tertiary : OV.outlineVariant,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isAccepting
+                          ? 'Accepting Appointments'
+                          : 'Consultations Paused',
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: isAccepting ? OV.tertiary : OV.onSurfaceVariant,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$duration min slots',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: OV.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                DividerLine(),
+                const SizedBox(height: 10),
+                Text(
+                  'WORKING HOURS',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: OV.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (activeDays.isEmpty)
+                  Text(
+                    'No working days enabled',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontStyle: FontStyle.italic,
+                      color: OV.outlineVariant,
+                    ),
+                  )
+                else
+                  Text(
+                    activeDays.join(', '),
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: OV.onSurface,
+                      height: 1.4,
+                    ),
+                  ),
+                if (avail.blockedDates.isNotEmpty || avail.blockedSlots.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      if (avail.blockedDates.isNotEmpty)
+                        _Chip(
+                          '${avail.blockedDates.length} Dates Blocked',
+                          OV.errorContainer.withValues(alpha: 0.5),
+                          OV.error,
+                        ),
+                      if (avail.blockedSlots.isNotEmpty)
+                        _Chip(
+                          '${avail.blockedSlots.length} Slots Blocked',
+                          OV.secondaryContainer.withValues(alpha: 0.5),
+                          OV.secondary,
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAvailabilitySheet(BuildContext context, DoctorModel d) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DoctorAvailabilitySheet(
+        doctor: d,
+        onSaved: () {
+          setState(() => _loading = true);
+          _load();
+        },
+      ),
+    );
+  }
 
   Widget _buildSettingsSection() => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),

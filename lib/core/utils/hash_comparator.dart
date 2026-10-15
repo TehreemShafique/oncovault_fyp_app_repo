@@ -25,20 +25,28 @@ class IntegrityResult {
 }
 
 class HashComparator {
-  // ── Use singleton, no constructor ────────────────────────────
-  final HashingService _hashingService = HashingService.instance;
+  final HashingService _hashingService;
+  final http.Client? _client;
+
+  HashComparator({HashingService? hashingService, http.Client? client})
+      : _hashingService = hashingService ?? HashingService.instance,
+        _client = client;
 
   // ── Verify remote file from Firebase URL ─────────────────────
   Future<IntegrityResult> verifyRemoteFile({
     required String fileUrl,
     required String storedHash,
+    http.Client? client,
   }) async {
     if (storedHash.isEmpty) {
       return const IntegrityResult(status: IntegrityStatus.unverified);
     }
 
     try {
-      final response = await http.get(Uri.parse(fileUrl));
+      final httpClient = client ?? _client;
+      final response = httpClient != null
+          ? await httpClient.get(Uri.parse(fileUrl))
+          : await http.get(Uri.parse(fileUrl));
 
       if (response.statusCode != 200) {
         return IntegrityResult(
@@ -48,12 +56,10 @@ class HashComparator {
         );
       }
 
-      // Convert bytes to string then hash
-      // Uses hashString() which your HashingService already has
-      final Uint8List bytes        = response.bodyBytes;
-      final String   bytesAsString = String.fromCharCodes(bytes);
-      final String   computedHash  = _hashingService.hashString(bytesAsString);
-      final bool     match         = computedHash == storedHash;
+      // Hash raw response body bytes directly without lossy UTF-16 string conversion
+      final Uint8List bytes       = response.bodyBytes;
+      final String    computedHash = _hashingService.hashBytes(bytes);
+      final bool      match        = computedHash.toLowerCase() == storedHash.trim().toLowerCase();
 
       return IntegrityResult(
         status       : match

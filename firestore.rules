@@ -217,12 +217,19 @@ service cloud.firestore {
     // =========================================================================
     match /doctors/{doctorId} {
       allow read: if isAuthenticated();
-      // Doctor can update availability and profile, but cannot tamper with backend coordination scheduleRevision
+      // Doctor can update profile, but cannot tamper with backend coordination scheduleRevision
+      // or directly alter availability or legacy slot configurations without going through trusted Cloud Function validation
       allow create: if isAuthenticated() && isOwner(doctorId) && isDoctor() &&
-        (!request.resource.data.keys().hasAny(['scheduleRevision']) || request.resource.data.scheduleRevision == 0);
+        (!request.resource.data.keys().hasAny(['scheduleRevision', 'availability', 'availableDays', 'availableSlots']) || request.resource.data.scheduleRevision == 0);
       allow update: if isAuthenticated() && isOwner(doctorId) && isDoctor() &&
         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['scheduleRevision']) ||
-         request.resource.data.scheduleRevision == resource.data.scheduleRevision);
+         request.resource.data.scheduleRevision == resource.data.scheduleRevision) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['availability']) ||
+         request.resource.data.availability == resource.data.availability) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['availableDays']) ||
+         request.resource.data.availableDays == resource.data.availableDays) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['availableSlots']) ||
+         request.resource.data.availableSlots == resource.data.availableSlots);
       allow delete: if false;
 
       // Subcollection: Doctor Critical Alerts

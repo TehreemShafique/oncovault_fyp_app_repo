@@ -127,6 +127,56 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
         })
       );
     });
+
+    test('Doctor directly mutating availability map is blocked', async () => {
+      const docContext = testEnv.authenticatedContext('doc_1');
+      await assertFails(
+        docContext.firestore().doc('doctors/doc_1').update({
+          availability: {
+            slotDurationMinutes: 15,
+            weeklySchedule: {},
+            blockedDates: [],
+            blockedSlots: [],
+          },
+        })
+      );
+    });
+
+    test('Doctor directly mutating availableDays is blocked', async () => {
+      const docContext = testEnv.authenticatedContext('doc_1');
+      await assertFails(
+        docContext.firestore().doc('doctors/doc_1').update({
+          availableDays: ['Mon', 'Tue'],
+        })
+      );
+    });
+
+    test('Doctor directly mutating availableSlots is blocked', async () => {
+      const docContext = testEnv.authenticatedContext('doc_1');
+      await assertFails(
+        docContext.firestore().doc('doctors/doc_1').update({
+          availableSlots: ['09:00 AM'],
+        })
+      );
+    });
+
+    test('Patient attempting to update doctor document is blocked', async () => {
+      const patientContext = testEnv.authenticatedContext('patient_1');
+      await assertFails(
+        patientContext.firestore().doc('doctors/doc_1').update({
+          name: 'Hacked Doctor Name',
+        })
+      );
+    });
+
+    test('Unauthenticated caller attempting to update doctor document is blocked', async () => {
+      const unauthContext = testEnv.unauthenticatedContext();
+      await assertFails(
+        unauthContext.firestore().doc('doctors/doc_1').update({
+          name: 'Hacked Doctor Name',
+        })
+      );
+    });
   });
 
   // ── 3. APPOINTMENT CREATION INTEGRITY ──
