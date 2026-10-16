@@ -9,7 +9,9 @@ import '../../services/auth_service.dart';
 import '../profile_selection_screen.dart';
 import '../../models/appointment_model.dart';
 import '../../models/patient_profile_model.dart';
+import '../../models/vital_sign_model.dart';
 import '../../services/appointment_service.dart';
+import '../../services/nurse_service.dart';
 import 'patient_profile_screen.dart';
 import 'book_appointment_screen.dart';
 import 'appointment_list_screen.dart';
@@ -221,6 +223,12 @@ class _DashboardHome extends StatelessWidget {
           // )),
 
           const SliverToBoxAdapter(child: SizedBox(height: 16)),
+
+          // ── Patient Vital Signs ────────────────────────────────
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _PatientVitalsCard(patientId: patientId),
+          )),
 
           // ── Health Trends ──────────────────────────────────────
           SliverToBoxAdapter(child: Padding(
@@ -599,3 +607,81 @@ PageRoute _slide(Widget page) => PageRouteBuilder(
           .chain(CurveTween(curve: Curves.easeOutCubic));
       return SlideTransition(position: a.drive(tween), child: child);
     });
+
+class _PatientVitalsCard extends StatelessWidget {
+  final String patientId;
+  const _PatientVitalsCard({required this.patientId});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<VitalSignModel?>(
+      stream: NurseService().watchLatestPatientVitals(patientId),
+      builder: (context, snapshot) {
+        final vitals = snapshot.data;
+        if (vitals == null) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _SectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        _IconBubble(icon: Icons.monitor_heart_rounded, bg: OV.primaryContainer),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Latest Vital Signs',
+                              style: GoogleFonts.manrope(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: OV.onSurface,
+                              ),
+                            ),
+                            Text(
+                              'Recorded ${DateFormat('MMM d, h:mm a').format(vitals.recordedAt)}',
+                              style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _vitalCol('Blood Pressure', '${vitals.systolicBp}/${vitals.diastolicBp}', 'mmHg'),
+                    _vitalCol('Pulse', '${vitals.pulseRate}', 'bpm'),
+                    _vitalCol('Temp', '${vitals.temperatureCelsius.toStringAsFixed(1)}°C', '${vitals.temperatureFahrenheit.toStringAsFixed(1)}°F'),
+                    _vitalCol('SpO2', '${vitals.oxygenSaturation}%', ''),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _vitalCol(String label, String value, String unit) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+        const SizedBox(height: 2),
+        Text(value, style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700, color: OV.onSurface)),
+        if (unit.isNotEmpty)
+          Text(unit, style: GoogleFonts.inter(fontSize: 10, color: OV.outline)),
+      ],
+    );
+  }
+}

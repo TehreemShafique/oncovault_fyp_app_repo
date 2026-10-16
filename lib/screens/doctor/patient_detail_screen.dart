@@ -6,6 +6,9 @@ import '../../theme/app_theme.dart';
 import '../../models/patient_profile_model.dart';
 import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/nurse_service.dart';
+import '../../models/vital_sign_model.dart';
+import '../nurse/patient_vitals_history_screen.dart';
 import 'doctor_widgets.dart';
 import 'full_medical_history_screen.dart';
 import 'add_diagnosis_screen.dart';
@@ -21,6 +24,7 @@ class PatientDetailScreen extends StatefulWidget {
 
 class _PatientDetailScreenState extends State<PatientDetailScreen> {
   final _service = DoctorService();
+  final _nurseService = NurseService();
   PatientProfile? _profile;
   bool _loading = true;
 
@@ -195,9 +199,19 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 14)),
 
+        // ── Patient Vital Signs Summary Card ──────────────────────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _DoctorVitalsCard(
+              patientId: widget.patientId,
+              patientName: p.name,
+              nurseService: _nurseService,
+            ),
+          ),
+        ),
 
-
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        const SliverToBoxAdapter(child: SizedBox(height: 14)),
 
         // ── AI Insights placeholder ───────────────────────────────
         SliverToBoxAdapter(child: Padding(
@@ -359,4 +373,188 @@ class _ClinicalEntry extends StatelessWidget {
           if (entry.blockchainVerified) ...[const SizedBox(height: 8), const BlockchainBadge()],
         ])),
       ]));
+}
+
+class _DoctorVitalsCard extends StatelessWidget {
+  final String patientId;
+  final String patientName;
+  final NurseService nurseService;
+
+  const _DoctorVitalsCard({
+    required this.patientId,
+    required this.patientName,
+    required this.nurseService,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<VitalSignModel?>(
+      stream: nurseService.watchLatestPatientVitals(patientId),
+      builder: (context, snapshot) {
+        final vitals = snapshot.data;
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: vitals?.isCritical == true
+                  ? OV.error.withOpacity(0.5)
+                  : vitals != null && vitals.warningFlags.isNotEmpty
+                      ? const Color(0xFFF59E0B).withOpacity(0.5)
+                      : OV.outlineVariant.withOpacity(0.5),
+              width: (vitals != null && (vitals.isCritical || vitals.warningFlags.isNotEmpty)) ? 1.5 : 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: OV.primary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.monitor_heart_rounded, color: OV.primary, size: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Latest Vital Signs',
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: OV.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PatientVitalsHistoryScreen(
+                            patientId: patientId,
+                            patientName: patientName,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text(
+                      'History →',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: OV.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (vitals == null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'No vital observations recorded yet by nursing staff.',
+                    style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                  ),
+                )
+              else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Recorded by Nurse ${vitals.nurseName} • ${DateFormat('MMM d, h:mm a').format(vitals.recordedAt)}',
+                      style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant),
+                    ),
+                    if (vitals.isCritical)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFDE8E8),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'CRITICAL',
+                          style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: OV.error),
+                        ),
+                      )
+                    else if (vitals.warningFlags.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'WARNING',
+                          style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFFB45309)),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _vitalItem('BP', '${vitals.systolicBp}/${vitals.diastolicBp}', 'mmHg'),
+                    _vitalItem('Pulse', '${vitals.pulseRate}', 'bpm'),
+                    _vitalItem('Temp', '${vitals.temperatureCelsius.toStringAsFixed(1)}°C', '${vitals.temperatureFahrenheit.toStringAsFixed(1)}°F'),
+                    _vitalItem('SpO2', '${vitals.oxygenSaturation}%', ''),
+                    _vitalItem('Resp', '${vitals.respiratoryRate}', '/min'),
+                  ],
+                ),
+                if (vitals.warningFlags.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: vitals.isCritical ? const Color(0xFFFDE8E8) : const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      vitals.warningFlags.join(' • '),
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: vitals.isCritical ? OV.error : const Color(0xFF92400E),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _vitalItem(String label, String value, String unit) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: GoogleFonts.inter(fontSize: 10, color: OV.outline, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value, style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: OV.onSurface)),
+          if (unit.isNotEmpty)
+            Text(unit, style: GoogleFonts.inter(fontSize: 9, color: OV.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
 }

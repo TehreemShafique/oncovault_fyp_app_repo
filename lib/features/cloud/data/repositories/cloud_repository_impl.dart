@@ -2,6 +2,7 @@
 
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../models/medical_record_model.dart';
@@ -12,6 +13,7 @@ import '../../../../core/utils/hash_comparator.dart';
 
 class EhrRepositoryImpl {
   final FirebaseFirestore   _db             = FirebaseFirestore.instance;
+  final FirebaseAuth        _auth           = FirebaseAuth.instance;
   final HashingService      _hashingService = HashingService.instance;
   final CloudStorageService _cloudStorage   = CloudStorageService.instance;
   final HashComparator      _comparator     = HashComparator();
@@ -62,6 +64,7 @@ class EhrRepositoryImpl {
       uploadedAt : now,
       isArchived : false,
       fileHash   : fileHash,
+      uploadedBy : _auth.currentUser?.uid,
     );
 
     // Step 4: Save to Firestore

@@ -70,6 +70,21 @@ service cloud.firestore {
       return isDoctor() || isNurse();
     }
 
+    function hasActiveNurseAssignment(patientId) {
+      return isNurse() &&
+        exists(/databases/$(database)/documents/nurse_patient_assignments/$(request.auth.uid + '_' + patientId)) &&
+        get(/databases/$(database)/documents/nurse_patient_assignments/$(request.auth.uid + '_' + patientId)).data.status == 'active';
+    }
+
+    function canAccessPatientVitals(patientId) {
+      return isAuthenticated() && (
+        isOwner(patientId) ||
+        isDoctor() ||
+        hasRole('admin') ||
+        hasActiveNurseAssignment(patientId)
+      );
+    }
+
     // =========================================================================
     // 1. MEDICAL ID DIRECTORY (Pre-auth lookup)
     // =========================================================================
@@ -208,9 +223,10 @@ service cloud.firestore {
       match /medicalRecords/{recordId} {
         allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
         allow create: if isAuthenticated() && (isOwner(patientId) || isClinician()) &&
+          (!('uploadedBy' in request.resource.data) || request.resource.data.uploadedBy == request.auth.uid) &&
           !request.resource.data.keys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
         allow update: if isAuthenticated() && (isOwner(patientId) || isClinician()) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uploadedBy', 'fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
         allow delete: if isAuthenticated() && (isOwner(patientId) || isDoctor());
       }
     }
@@ -249,12 +265,64 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // 5. NURSES COLLECTION
+    // 5. NURSES COLLECTION & SUBCOLLECTIONS
     // =========================================================================
     match /nurses/{nurseId} {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated() && isOwner(nurseId) && isNurse();
       allow delete: if false;
+
+      // Subcollection: Daily vitals recording statistics (FR-NHO.2)
+      match /daily_stats/{dateKey} {
+        allow read: if isAuthenticated() && (isOwner(nurseId) || hasRole('admin'));
+        allow create, update: if isAuthenticated() && ((isOwner(nurseId) && isNurse()) || hasRole('admin'));
+        allow delete: if false;
+      }
+
+      // Subcollection: Reports uploaded tracking (FR-NHO.3)
+      match /reports_uploaded/{reportId} {
+        allow read: if isAuthenticated() && (isOwner(nurseId) || hasRole('admin'));
+        // Prevent artificial metric inflation & claiming other clinicians' uploads:
+        // A nurse can only record an uploaded report attribution if:
+        // 1. The nurse is active and owns the record
+        // 2. The target patient is specified and matches reportId
+        // 3. The nurse has an active care assignment for that patient
+        // 4. The underlying medical record exists in Firestore (top-level or patient subcollection)
+        // 5. Authoritative uploader attribution: The underlying record must explicitly attribute
+        //    the upload to this nurse (uploadedBy == request.auth.uid) AND match patientId
+        allow create: if isAuthenticated() &&
+          isOwner(nurseId) && isNurse() &&
+          request.resource.data.patientId is string &&
+          request.resource.data.reportId == reportId &&
+          hasActiveNurseAssignment(request.resource.data.patientId) &&
+          (
+            (
+              exists(/databases/$(database)/documents/medical_records/$(reportId)) &&
+              get(/databases/$(database)/documents/medical_records/$(reportId)).data.patientId == request.resource.data.patientId &&
+              get(/databases/$(database)/documents/medical_records/$(reportId)).data.uploadedBy == request.auth.uid
+            ) ||
+            (
+              exists(/databases/$(database)/documents/patients/$(request.resource.data.patientId)/medicalRecords/$(reportId)) &&
+              get(/databases/$(database)/documents/patients/$(request.resource.data.patientId)/medicalRecords/$(reportId)).data.uploadedBy == request.auth.uid
+            )
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    // =========================================================================
+    // 5B. NURSE-PATIENT ASSIGNMENTS (Phase 3A Authorized Care Relationship)
+    // =========================================================================
+    match /nurse_patient_assignments/{assignmentId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.nurseId ||
+        request.auth.uid == resource.data.patientId ||
+        isDoctor() ||
+        hasRole('admin')
+      );
+      // Direct client writes strictly forbidden: all assignments and revocations
+      // must route through trusted Cloud Functions (assignNurse / revokeNurseAssignment) via Admin SDK.
+      allow write: if false;
     }
 
     // =========================================================================
@@ -304,12 +372,24 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // 9. EHR VITALS COLLECTION
+    // 9. EHR VITALS COLLECTION & OBSERVATIONS SUBCOLLECTION
     // =========================================================================
     match /ehr_vitals/{patientId} {
-      allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
-      allow create, update: if isAuthenticated() && isClinician();
-      allow delete: if isAuthenticated() && isDoctor();
+      // Read access requires patient ownership, doctor role, admin, or active nurse assignment
+      allow read: if canAccessPatientVitals(patientId);
+
+      // Direct client writes strictly forbidden: all vital observations and latest cache
+      // updates must route through the authoritative Cloud Function recordVitalObservation via Admin SDK.
+      allow write: if false;
+
+      // Subcollection: Immutable Historical Observations (Phase 3A)
+      match /observations/{observationId} {
+        // Read observations requires the same authorization check as parent
+        allow read: if canAccessPatientVitals(patientId);
+
+        // Direct client writes strictly forbidden: callable function is authoritative write path
+        allow write: if false;
+      }
     }
 
     // =========================================================================
@@ -323,11 +403,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         (isPatient() && request.resource.data.patientId == request.auth.uid) ||
         isClinician()
-      ) && !request.resource.data.keys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
+      ) &&
+      (!('uploadedBy' in request.resource.data) || request.resource.data.uploadedBy == request.auth.uid) &&
+      !request.resource.data.keys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
       allow update: if isAuthenticated() && (
         (resource.data.patientId == request.auth.uid && request.resource.data.patientId == request.auth.uid) ||
         isClinician()
-      ) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
+      ) &&
+      !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uploadedBy', 'fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
       allow delete: if isAuthenticated() && isDoctor();
     }
 

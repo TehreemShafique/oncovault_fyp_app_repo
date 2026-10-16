@@ -36,6 +36,7 @@ class MedicalRecordModel {
   final DateTime uploadedAt;
   final bool isArchived;
   final String fileHash;     // ← added for integrity verification
+  final String? uploadedBy;  // ← authoritative uploader attribution
   final String? fabricTxId;
   final String? fabricStatus;
   final int? fabricVersion;
@@ -57,6 +58,7 @@ class MedicalRecordModel {
     required this.uploadedAt,
     this.isArchived  = false,
     this.fileHash    = '',
+    this.uploadedBy,
     this.fabricTxId,
     this.fabricStatus,
     this.fabricVersion,
@@ -82,6 +84,7 @@ class MedicalRecordModel {
     'uploadedAt':  Timestamp.fromDate(uploadedAt),
     'isArchived':  isArchived,
     'fileHash':    fileHash,
+    if (uploadedBy != null && uploadedBy!.isNotEmpty) 'uploadedBy': uploadedBy,
   };
 
   /// Serializes record metadata. Blockchain proof fields are omitted from client writes
@@ -114,6 +117,7 @@ class MedicalRecordModel {
         uploadedAt:  (m['uploadedAt'] as Timestamp).toDate(),
         isArchived:  m['isArchived'] ?? false,
         fileHash:    m['fileHash']  ?? '',
+        uploadedBy:  m['uploadedBy'] as String?,
         fabricTxId:  m['fabricTxId'],
         fabricStatus: m['fabricStatus'],
         fabricVersion: m['fabricVersion'] is int ? m['fabricVersion'] : int.tryParse(m['fabricVersion']?.toString() ?? ''),
@@ -144,6 +148,7 @@ class MedicalRecordModel {
     uploadedAt: uploadedAt,
     isArchived: isArchived,
     fileHash: fileHash,
+    uploadedBy: uploadedBy,
     fabricTxId: fabricTxId ?? this.fabricTxId,
     fabricStatus: fabricStatus ?? this.fabricStatus,
     fabricVersion: fabricVersion ?? this.fabricVersion,

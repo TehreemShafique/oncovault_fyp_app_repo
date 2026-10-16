@@ -1636,14 +1636,51 @@ class DoctorService {
           s.docs.map((d) => MedicalRecordModel.fromMap(d.data())).toList());
 
   // ── EHR Vitals ────────────────────────────────────────────────
+  /// Authoritative vital observation entry via trusted backend callable.
+  /// Enforces server timestamps, range validation, and race-free latest cache sync.
+  /// Prevents direct client manipulation of protected ehr_vitals paths.
   Future<void> saveEhrVitals({
     required String patientId,
     required Map<String, dynamic> vitals,
   }) async {
-    await _db.collection('ehr_vitals').doc(patientId).set(
-      {...vitals, 'updatedAt': Timestamp.now()},
-      SetOptions(merge: true),
-    );
+    num systolic = 120;
+    num diastolic = 80;
+    if (vitals['systolicBp'] is num) {
+      systolic = vitals['systolicBp'] as num;
+    } else if (vitals['bloodPressure'] is String) {
+      final parts = (vitals['bloodPressure'] as String).split('/');
+      if (parts.length == 2) {
+        systolic = num.tryParse(parts[0].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 120;
+        diastolic = num.tryParse(parts[1].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 80;
+      }
+    }
+    if (vitals['diastolicBp'] is num) {
+      diastolic = vitals['diastolicBp'] as num;
+    }
+
+    final pulse = (vitals['pulseRate'] ?? vitals['heartRate'] ?? 72) as num;
+    final temp = (vitals['temperature'] ?? 37.0) as num;
+    final tempUnit = vitals['temperatureUnit']?.toString() ?? 'C';
+    final resp = (vitals['respiratoryRate'] ?? 16) as num;
+    final o2 = (vitals['oxygenSaturation'] ?? 98) as num;
+    final weight = (vitals['weightKg'] ?? vitals['weight']) as num?;
+    final height = vitals['heightCm'] as num?;
+    final notes = vitals['notes']?.toString() ?? '';
+
+    final callable = _functions.httpsCallable('recordVitalObservation');
+    await callable.call<Map<String, dynamic>>({
+      'patientId': patientId,
+      'systolicBp': systolic,
+      'diastolicBp': diastolic,
+      'pulseRate': pulse,
+      'temperature': temp,
+      'temperatureUnit': tempUnit,
+      'respiratoryRate': resp,
+      'oxygenSaturation': o2,
+      if (weight != null) 'weightKg': weight,
+      if (height != null) 'heightCm': height,
+      'notes': notes,
+    });
   }
 
   Future<Map<String, dynamic>> fetchEhrVitals(String patientId) async {

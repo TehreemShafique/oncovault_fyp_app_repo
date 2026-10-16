@@ -7,8 +7,11 @@ import '../../models/user_model.dart';
 import '../../models/appointment_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/doctor_service.dart';
+import '../../services/nurse_service.dart';
 import '../profile_selection_screen.dart';
 import 'create_blood_cancer_ehr_screen.dart';
+import 'record_vitals_screen.dart';
+import 'patient_vitals_history_screen.dart';
 
 class NurseDashboard extends StatefulWidget {
   final OVUser user;
@@ -20,6 +23,7 @@ class NurseDashboard extends StatefulWidget {
 
 class _NurseDashboardState extends State<NurseDashboard> {
   final _doctorService = DoctorService();
+  final _nurseService = NurseService();
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
@@ -165,7 +169,40 @@ class _NurseDashboardState extends State<NurseDashboard> {
               ),
             ),
 
-            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+
+            // ── SDS M9 Summary Metric Cards ──────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    _buildMetricCard(
+                      label: 'Assigned Patients',
+                      stream: _nurseService.watchNurseAssignedPatientsCount(widget.user.uid),
+                      icon: Icons.people_alt_rounded,
+                      color: OV.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    _buildMetricCard(
+                      label: 'Vitals Today',
+                      stream: _nurseService.watchNurseTodayVitalsCount(widget.user.uid),
+                      icon: Icons.monitor_heart_rounded,
+                      color: OV.tertiary,
+                    ),
+                    const SizedBox(width: 10),
+                    _buildMetricCard(
+                      label: 'Reports Uploaded',
+                      stream: _nurseService.watchNurseReportsUploadedCount(widget.user.uid),
+                      icon: Icons.description_rounded,
+                      color: const Color(0xFF6366F1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SliverToBoxAdapter(child: SizedBox(height: 18)),
 
             // ── Search Field ─────────────────────────────────────────
             SliverToBoxAdapter(
@@ -331,6 +368,70 @@ class _NurseDashboardState extends State<NurseDashboard> {
       ),
     );
   }
+
+  Widget _buildMetricCard({
+    required String label,
+    required Stream<int> stream,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: OV.outlineVariant.withOpacity(0.5)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 16),
+            ),
+            const SizedBox(height: 10),
+            StreamBuilder<int>(
+              stream: stream,
+              builder: (context, snap) {
+                final val = snap.data ?? 0;
+                return Text(
+                  '$val',
+                  style: GoogleFonts.manrope(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: OV.onSurface,
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: OV.onSurfaceVariant,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ApprovedApptCard extends StatelessWidget {
@@ -449,6 +550,66 @@ class _ApprovedApptCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 40,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => RecordVitalsScreen(
+                            patientId: a.patientId,
+                            patientName: a.patientName,
+                            doctorId: a.doctorId,
+                            doctorName: a.doctorName,
+                            appointmentId: a.id,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.favorite_rounded, size: 16, color: OV.primary),
+                    label: Text(
+                      'Record Vitals',
+                      style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: OV.primary,
+                      side: BorderSide(color: OV.primary.withOpacity(0.6)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 40,
+                width: 44,
+                child: IconButton(
+                  tooltip: 'Vitals History',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PatientVitalsHistoryScreen(
+                          patientId: a.patientId,
+                          patientName: a.patientName,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.history_rounded, size: 20, color: OV.onSurface),
+                  style: IconButton.styleFrom(
+                    backgroundColor: OV.surfaceContainer.withOpacity(0.5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
             height: 44,

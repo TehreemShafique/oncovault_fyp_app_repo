@@ -6,6 +6,8 @@ import '../../theme/app_theme.dart';
 import '../../models/doctor_model.dart';
 import '../../models/medical_record_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/nurse_service.dart';
+import '../../models/vital_sign_model.dart';
 import 'doctor_widgets.dart';
 import 'add_diagnosis_screen.dart';
 
@@ -23,7 +25,7 @@ class _FullMedicalHistoryScreenState extends State<FullMedicalHistoryScreen>
   final _service = DoctorService();
 
   @override
-  void initState() { super.initState(); _tab = TabController(length: 4, vsync: this); }
+  void initState() { super.initState(); _tab = TabController(length: 5, vsync: this); }
   @override
   void dispose() { _tab.dispose(); super.dispose(); }
 
@@ -65,7 +67,7 @@ class _FullMedicalHistoryScreenState extends State<FullMedicalHistoryScreen>
                     unselectedLabelStyle: GoogleFonts.inter(fontSize: 11),
                     labelColor: Colors.white, unselectedLabelColor: OV.onSurfaceVariant,
                     dividerColor: Colors.transparent,
-                    tabs: const [Tab(text: 'History'), Tab(text: 'Reports'),
+                    tabs: const [Tab(text: 'History'), Tab(text: 'Vitals'), Tab(text: 'Reports'),
                       Tab(text: 'Prescriptions'), Tab(text: 'Labs')]))),
 
         const SizedBox(height: 12),
@@ -73,6 +75,8 @@ class _FullMedicalHistoryScreenState extends State<FullMedicalHistoryScreen>
         Expanded(child: TabBarView(controller: _tab, children: [
           // History Tab
           _DiagnosisHistoryTab(patientId: widget.patientId, service: _service),
+          // Vitals Tab
+          _VitalsHistoryTab(patientId: widget.patientId),
           // Reports Tab
           _RecordsTab(patientId: widget.patientId, service: _service, type: RecordType.report),
           // Prescriptions Tab
@@ -357,4 +361,146 @@ class _Empty extends StatelessWidget {
     const SizedBox(height: 12),
     Text(msg, style: GoogleFonts.inter(fontSize: 14, color: OV.onSurfaceVariant)),
   ]));
+}
+
+class _VitalsHistoryTab extends StatelessWidget {
+  final String patientId;
+  const _VitalsHistoryTab({required this.patientId});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<VitalSignModel>>(
+      stream: NurseService().watchPatientVitalsHistory(patientId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: OV.primary));
+        }
+        final observations = snapshot.data ?? [];
+        if (observations.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.monitor_heart_outlined, size: 48, color: OV.outlineVariant),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No vital observations recorded',
+                    style: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700, color: OV.onSurface),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Vital sign entries by clinical nursing staff will appear here.',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          itemCount: observations.length,
+          itemBuilder: (context, index) {
+            final obs = observations[index];
+            final dateFormat = DateFormat('MMM d, yyyy • h:mm a');
+            final formattedDate = dateFormat.format(obs.recordedAt);
+            final isCrit = obs.isCritical;
+            final hasWarn = obs.warningFlags.isNotEmpty;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isCrit
+                      ? OV.error.withOpacity(0.4)
+                      : hasWarn
+                          ? const Color(0xFFF59E0B).withOpacity(0.4)
+                          : OV.outlineVariant.withOpacity(0.4),
+                  width: (isCrit || hasWarn) ? 1.5 : 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        formattedDate,
+                        style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: OV.onSurface),
+                      ),
+                      if (isCrit)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: const Color(0xFFFDE8E8), borderRadius: BorderRadius.circular(4)),
+                          child: Text('CRITICAL', style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: OV.error)),
+                        )
+                      else if (hasWarn)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(4)),
+                          child: Text('WARNING', style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFFB45309))),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: OV.tertiaryContainer, borderRadius: BorderRadius.circular(4)),
+                          child: Text('Normal', style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w700, color: OV.tertiary)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Nurse: ${obs.nurseName}', style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      _miniVital('BP', '${obs.systolicBp}/${obs.diastolicBp} mmHg'),
+                      _miniVital('Pulse', '${obs.pulseRate} bpm'),
+                      _miniVital('Temp', '${obs.temperatureCelsius.toStringAsFixed(1)} °C'),
+                      _miniVital('SpO2', '${obs.oxygenSaturation}%'),
+                      _miniVital('Resp', '${obs.respiratoryRate}/m'),
+                    ],
+                  ),
+                  if (obs.warningFlags.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      obs.warningFlags.join(' • '),
+                      style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: isCrit ? OV.error : const Color(0xFF92400E)),
+                    ),
+                  ],
+                  if (obs.notes != null && obs.notes!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Notes: ${obs.notes}',
+                      style: GoogleFonts.inter(fontSize: 11, fontStyle: FontStyle.italic, color: OV.onSurfaceVariant),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _miniVital(String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: GoogleFonts.inter(fontSize: 9, color: OV.outline, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value, style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w700, color: OV.onSurface)),
+        ],
+      ),
+    );
+  }
 }

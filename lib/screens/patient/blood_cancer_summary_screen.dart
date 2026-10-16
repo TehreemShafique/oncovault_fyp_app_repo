@@ -4,7 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/blood_cancer_ehr_model.dart';
+import '../../models/vital_sign_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/nurse_service.dart';
 
 class BloodCancerSummaryScreen extends StatefulWidget {
   final String patientId;
@@ -112,6 +114,11 @@ class _BloodCancerSummaryScreenState extends State<BloodCancerSummaryScreen> {
 
               // ── Active Clinical Status Card ─────────────────────
               _buildDiagnosisCard(currentRecord),
+
+              const SizedBox(height: 16),
+
+              // ── Recent Vital Signs Observation ──────────────────
+              _buildVitalsCard(widget.patientId),
 
               const SizedBox(height: 16),
 
@@ -660,6 +667,95 @@ class _BloodCancerSummaryScreenState extends State<BloodCancerSummaryScreen> {
           '${abs != null ? "$abs k/µL" : "—"}  (${pct != null ? "$pct%" : "—"})',
           style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: OV.onSurface),
         ),
+      ],
+    );
+  }
+
+  Widget _buildVitalsCard(String patientId) {
+    return StreamBuilder<VitalSignModel?>(
+      stream: NurseService().watchLatestPatientVitals(patientId),
+      builder: (context, snapshot) {
+        final vitals = snapshot.data;
+        if (vitals == null) return const SizedBox.shrink();
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: OV.outlineVariant.withOpacity(0.5)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: OV.primary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.monitor_heart_rounded, color: OV.primary, size: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Recent Vital Signs',
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: OV.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    DateFormat('MMM d, h:mm a').format(vitals.recordedAt),
+                    style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _vitalMetric('Blood Pressure', '${vitals.systolicBp}/${vitals.diastolicBp}', 'mmHg'),
+                  _vitalMetric('Pulse Rate', '${vitals.pulseRate}', 'bpm'),
+                  _vitalMetric('Temperature', '${vitals.temperatureCelsius.toStringAsFixed(1)}°C', '(${vitals.temperatureFahrenheit.toStringAsFixed(1)}°F)'),
+                  _vitalMetric('SpO2', '${vitals.oxygenSaturation}%', ''),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Recorded by Nurse ${vitals.nurseName}',
+                style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _vitalMetric(String label, String value, String unit) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: GoogleFonts.inter(fontSize: 10, color: OV.outline, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 2),
+        Text(value, style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: OV.onSurface)),
+        if (unit.isNotEmpty)
+          Text(unit, style: GoogleFonts.inter(fontSize: 9, color: OV.onSurfaceVariant)),
       ],
     );
   }

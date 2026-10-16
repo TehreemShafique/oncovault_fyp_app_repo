@@ -706,4 +706,350 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
       );
     });
   });
+
+  // ── 7. PHASE 3A: NURSE VITALS & CARE ASSIGNMENT SECURITY RULES ──
+  describe('Phase 3A Nurse Vitals & Care Assignment Security', () => {
+    const nurseId = 'nurse_jackie';
+    const unassignedNurseId = 'nurse_stranger';
+    const patId = 'pat_phase3a';
+    const foreignPatId = 'pat_other';
+    const docId = 'dr_thorne';
+    const adminId = 'admin_sys';
+    const obsId = 'obs_test_001';
+
+    beforeEach(async () => {
+      // Seed Users
+      await seedDoc(`users/${nurseId}`, { uid: nurseId, role: 'nurse', name: 'Nurse Jackie' });
+      await seedDoc(`users/${unassignedNurseId}`, { uid: unassignedNurseId, role: 'nurse', name: 'Nurse Stranger' });
+      await seedDoc(`users/${patId}`, { uid: patId, role: 'patient', name: 'Phase3A Patient' });
+      await seedDoc(`users/${foreignPatId}`, { uid: foreignPatId, role: 'patient', name: 'Foreign Patient' });
+      await seedDoc(`users/${docId}`, { uid: docId, role: 'doctor', name: 'Dr. Thorne' });
+      await seedDoc(`users/${adminId}`, { uid: adminId, role: 'admin', name: 'Admin Sys' });
+
+      // Seed an active assignment for nurse_jackie to pat_phase3a
+      await seedDoc(`nurse_patient_assignments/${nurseId}_${patId}`, {
+        id: `${nurseId}_${patId}`,
+        nurseId,
+        patientId: patId,
+        status: 'active',
+        assignedBy: adminId,
+        assignedAt: new Date(),
+      });
+    });
+
+    test('Nurse attempting self-assignment via direct client write is strictly blocked', async () => {
+      const nurseContext = testEnv.authenticatedContext(unassignedNurseId);
+      const db = nurseContext.firestore();
+
+      await assertFails(
+        db.doc(`nurse_patient_assignments/${unassignedNurseId}_${patId}`).set({
+          id: `${unassignedNurseId}_${patId}`,
+          nurseId: unassignedNurseId,
+          patientId: patId,
+          status: 'active',
+          assignedBy: unassignedNurseId,
+        })
+      );
+    });
+
+    test('Direct client writes to nurse_patient_assignments are strictly blocked (callable-only backend)', async () => {
+      const adminContext = testEnv.authenticatedContext(adminId);
+      const db = adminContext.firestore();
+
+      await assertFails(
+        db.doc(`nurse_patient_assignments/${unassignedNurseId}_${patId}`).set({
+          id: `${unassignedNurseId}_${patId}`,
+          nurseId: unassignedNurseId,
+          patientId: patId,
+          status: 'active',
+          assignedBy: adminId,
+        })
+      );
+    });
+
+    test('Actively assigned nurse can read patient ehr_vitals and observations', async () => {
+      await seedDoc(`ehr_vitals/${patId}`, {
+        bloodPressure: '120/80 mmHg',
+        updatedAt: new Date(),
+      });
+
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      await assertSucceeds(db.doc(`ehr_vitals/${patId}`).get());
+    });
+
+    test('Unassigned nurse is blocked from reading patient ehr_vitals', async () => {
+      await seedDoc(`ehr_vitals/${patId}`, {
+        bloodPressure: '120/80 mmHg',
+        updatedAt: new Date(),
+      });
+
+      const unassignedContext = testEnv.authenticatedContext(unassignedNurseId);
+      const db = unassignedContext.firestore();
+
+      await assertFails(db.doc(`ehr_vitals/${patId}`).get());
+    });
+
+    test('Patient can read their own vitals, but cannot read foreign patient vitals', async () => {
+      await seedDoc(`ehr_vitals/${patId}`, { bloodPressure: '120/80 mmHg' });
+
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+      await assertSucceeds(db.doc(`ehr_vitals/${patId}`).get());
+
+      const foreignContext = testEnv.authenticatedContext(foreignPatId);
+      const foreignDb = foreignContext.firestore();
+      await assertFails(foreignDb.doc(`ehr_vitals/${patId}`).get());
+    });
+
+    test('Direct client observation write is blocked even for assigned nurse (must route via Cloud Function)', async () => {
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).set({
+          id: obsId,
+          patientId: patId,
+          nurseId,
+          nurseName: 'Nurse Jackie',
+          recordedAt: new Date(),
+          systolicBp: 120,
+          diastolicBp: 80,
+          pulseRate: 72,
+          temperature: 37.0,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+        })
+      );
+    });
+
+    test('Direct client write to latest-vitals cache is blocked', async () => {
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}`).set({
+          bloodPressure: '120/80 mmHg',
+          updatedAt: new Date(),
+        })
+      );
+    });
+
+    test('Unassigned nurse is blocked from creating vital observation', async () => {
+      const unassignedContext = testEnv.authenticatedContext(unassignedNurseId);
+      const db = unassignedContext.firestore();
+
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).set({
+          id: obsId,
+          patientId: patId,
+          nurseId: unassignedNurseId,
+          nurseName: 'Nurse Stranger',
+          recordedAt: new Date(),
+          systolicBp: 120,
+          diastolicBp: 80,
+          pulseRate: 72,
+          temperature: 37.0,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+        })
+      );
+    });
+
+    test('Nurse attempting to spoof another nurse UID is blocked', async () => {
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).set({
+          id: obsId,
+          patientId: patId,
+          nurseId: 'fake_nurse_uid', // Spoof attempt
+          nurseName: 'Fake Nurse',
+          recordedAt: new Date(),
+          systolicBp: 120,
+          diastolicBp: 80,
+          pulseRate: 72,
+          temperature: 37.0,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+        })
+      );
+    });
+
+    test('Observation with out-of-range clinical bounds is rejected by security rules', async () => {
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      // Systolic BP 300 is above permissible max 250
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).set({
+          id: obsId,
+          patientId: patId,
+          nurseId,
+          nurseName: 'Nurse Jackie',
+          recordedAt: new Date(),
+          systolicBp: 300,
+          diastolicBp: 80,
+          pulseRate: 72,
+          temperature: 37.0,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+        })
+      );
+    });
+
+    test('Patient attempting to write vital observation is blocked (strictly read-only)', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).set({
+          id: obsId,
+          patientId: patId,
+          nurseId: patId,
+          nurseName: 'Patient Self',
+          recordedAt: new Date(),
+          systolicBp: 120,
+          diastolicBp: 80,
+          pulseRate: 72,
+          temperature: 37.0,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+        })
+      );
+    });
+
+    test('Historical observations are strictly IMMUTABLE (update and delete are blocked)', async () => {
+      await seedDoc(`ehr_vitals/${patId}/observations/${obsId}`, {
+        id: obsId,
+        patientId: patId,
+        nurseId,
+        nurseName: 'Nurse Jackie',
+        systolicBp: 120,
+        diastolicBp: 80,
+        pulseRate: 72,
+        temperature: 37.0,
+        respiratoryRate: 16,
+        oxygenSaturation: 98,
+      });
+
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      // Update attempt must fail
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).update({
+          systolicBp: 130,
+        })
+      );
+
+      // Delete attempt must fail
+      await assertFails(
+        db.doc(`ehr_vitals/${patId}/observations/${obsId}`).delete()
+      );
+    });
+
+    test('Nurse cannot create phantom reports_uploaded record without active patient assignment', async () => {
+      // Seed a real medical record
+      const testReportId = 'rep_unassigned_test_01';
+      await seedDoc(`medical_records/${testReportId}`, {
+        id: testReportId,
+        patientId: patId,
+        title: 'CBC Report',
+      });
+
+      const unassignedContext = testEnv.authenticatedContext(unassignedNurseId);
+      const db = unassignedContext.firestore();
+
+      // Nurse Stranger is NOT assigned to patId -> must be rejected
+      await assertFails(
+        db.doc(`nurses/${unassignedNurseId}/reports_uploaded/${testReportId}`).set({
+          reportId: testReportId,
+          patientId: patId,
+          uploadedAt: new Date(),
+        })
+      );
+    });
+
+    test('Nurse cannot create phantom reports_uploaded record when referenced medical record does not exist', async () => {
+      const ghostReportId = 'rep_phantom_ghost_999';
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      // Nurse Jackie is assigned to patId, but rep_phantom_ghost_999 does not exist in medical_records
+      await assertFails(
+        db.doc(`nurses/${nurseId}/reports_uploaded/${ghostReportId}`).set({
+          reportId: ghostReportId,
+          patientId: patId,
+          uploadedAt: new Date(),
+        })
+      );
+    });
+
+    test('Nurse can create reports_uploaded record when actively assigned and referenced medical record exists with matching uploadedBy', async () => {
+      const validReportId = 'rep_legit_verified_01';
+      await seedDoc(`medical_records/${validReportId}`, {
+        id: validReportId,
+        patientId: patId,
+        title: 'Verified Lab CBC',
+        uploadedBy: nurseId, // Authoritative uploader is nurse_jackie
+      });
+
+      const nurseContext = testEnv.authenticatedContext(nurseId);
+      const db = nurseContext.firestore();
+
+      await assertSucceeds(
+        db.doc(`nurses/${nurseId}/reports_uploaded/${validReportId}`).set({
+          reportId: validReportId,
+          patientId: patId,
+          uploadedAt: new Date(),
+        })
+      );
+
+      // Verify anti-tamper: nurse cannot mutate or delete the verified metric record
+      await assertFails(
+        db.doc(`nurses/${nurseId}/reports_uploaded/${validReportId}`).update({
+          patientId: foreignPatId,
+        })
+      );
+      await assertFails(
+        db.doc(`nurses/${nurseId}/reports_uploaded/${validReportId}`).delete()
+      );
+    });
+
+    test('Nurse B cannot claim Nurse A uploaded report even if both are assigned to the same patient', async () => {
+      const nurseAReportId = 'rep_nurse_a_exclusive';
+      // Seed medical record uploaded by nurse_jackie
+      await seedDoc(`medical_records/${nurseAReportId}`, {
+        id: nurseAReportId,
+        patientId: patId,
+        title: 'Nurse Jackie Lab Upload',
+        uploadedBy: nurseId, // Authoritative uploader is nurse_jackie
+      });
+
+      // Seed active care assignment for Nurse Stranger to patId
+      await seedDoc(`nurse_patient_assignments/${unassignedNurseId}_${patId}`, {
+        id: `${unassignedNurseId}_${patId}`,
+        nurseId: unassignedNurseId,
+        patientId: patId,
+        status: 'active',
+        assignedBy: adminId,
+        assignedAt: new Date(),
+      });
+
+      const strangerContext = testEnv.authenticatedContext(unassignedNurseId);
+      const strangerDb = strangerContext.firestore();
+
+      // Nurse Stranger attempts to claim Nurse Jackie's report in their own reports_uploaded
+      await assertFails(
+        strangerDb.doc(`nurses/${unassignedNurseId}/reports_uploaded/${nurseAReportId}`).set({
+          reportId: nurseAReportId,
+          patientId: patId,
+          uploadedAt: new Date(),
+        })
+      );
+    });
+  });
 });
