@@ -10,6 +10,7 @@ import '../models/blood_cancer_ehr_model.dart';
 import '../models/doctor_availability_model.dart';
 import 'appointment_exceptions.dart';
 import 'appointment_service.dart';
+import 'fabric_gateway_service.dart';
 
 typedef ApproveAppointmentCallable = Future<Map<String, dynamic>> Function({
   required String appointmentId,
@@ -1389,18 +1390,29 @@ class DoctorService {
   }
 
   // ── Consent Management (FR-M2.2, FR-M8.2) ────────────────────
-  Future<bool> hasConsent(String doctorId, String patientId) async {
-    // Single field query — no composite index needed
-    final consentSnap =
-        await _consents.where('doctorId', isEqualTo: doctorId).get();
+  /// Evaluates patient consent on Hyperledger Fabric. Fails closed if the ledger is unreachable
+  /// or if consent is not active/revoked. Never falls back to unverified Firestore state.
+  Future<bool> hasConsent(String doctorId, String patientId, {String scope = 'BLOOD_CANCER_RESEARCH'}) async {
+    try {
+      final ledgerCheck = await FabricGatewayService.instance.checkConsent(
+        patientId: patientId,
+        providerId: doctorId,
+        scope: scope,
+      );
+      if (ledgerCheck['active'] == true || ledgerCheck['hasConsent'] == true) {
+        return true;
+      }
+      return false;
+    } catch (_) {
+      // Fail closed: Fabric ledger is authoritative. When unreachable or an error occurs,
+      // access to protected records is strictly denied.
+      return false;
+    }
+  }
 
-    // Filter in Dart
-    final hasGrant = consentSnap.docs.any((d) {
-      final data = d.data() as Map;
-      return data['patientId'] == patientId && data['status'] == 'granted';
-    });
-    if (hasGrant) return true;
-
+  /// Evaluates local clinic appointment relationship for legacy scheduling views.
+  /// Does NOT grant access to Fabric-protected medical records.
+  Future<bool> hasClinicAppointmentRelationship(String doctorId, String patientId) async {
     final apptSnap = await _appointments
         .where('doctorId', isEqualTo: doctorId)
         .where('patientId', isEqualTo: patientId)
@@ -1414,28 +1426,45 @@ class DoctorService {
     required String doctorId,
     required String patientName,
     required String doctorName,
+    String scope = 'BLOOD_CANCER_RESEARCH',
   }) async {
-    final id = '${patientId}_$doctorId';
-    await _consents.doc(id).set({
-      'id': id,
-      'patientId': patientId,
-      'doctorId': doctorId,
-      'patientName': patientName,
-      'doctorName': doctorName,
-      'status': 'granted',
-      'grantedAt': Timestamp.now(),
-    });
+    // 1. Verify caller authorization: only the patient can grant consent for their own data
+    final user = _safeAuth?.currentUser;
+    if (user == null || user.uid != patientId) {
+      throw const ConsentUnauthorizedException(
+        'Access Denied: Only the patient can authorize consent for their medical records.',
+      );
+    }
+
+    // 2. Route mutation through Trusted Fabric Gateway
+    // If the gateway returns 503 or errors, fail closed. Never write uncommitted state to Firestore!
+    final expiration = DateTime.now().add(const Duration(days: 365)).toIso8601String();
+    await FabricGatewayService.instance.grantConsent(
+      providerId: doctorId,
+      scope: scope,
+      expirationTimestamp: expiration,
+    );
   }
 
   Future<void> revokeConsent({
     required String patientId,
     required String doctorId,
+    String scope = 'BLOOD_CANCER_RESEARCH',
   }) async {
-    final id = '${patientId}_$doctorId';
-    await _consents.doc(id).update({
-      'status': 'revoked',
-      'revokedAt': Timestamp.now(),
-    });
+    // 1. Verify caller authorization: only the patient can revoke consent for their own data
+    final user = _safeAuth?.currentUser;
+    if (user == null || user.uid != patientId) {
+      throw const ConsentUnauthorizedException(
+        'Access Denied: Only the patient can revoke consent for their medical records.',
+      );
+    }
+
+    // 2. Route mutation through Trusted Fabric Gateway
+    // If the gateway returns 503 or errors, fail closed.
+    await FabricGatewayService.instance.revokeConsent(
+      providerId: doctorId,
+      scope: scope,
+    );
   }
 
   // ── Diagnoses ─────────────────────────────────────────────────
@@ -1781,4 +1810,13 @@ class DoctorService {
           endTime: today.add(const Duration(hours: 14))),
     ];
   }
+}
+
+/// Thrown when an unauthorized user attempts to mutate consent.
+class ConsentUnauthorizedException implements Exception {
+  final String message;
+  const ConsentUnauthorizedException(this.message);
+
+  @override
+  String toString() => message;
 }

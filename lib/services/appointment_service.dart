@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/appointment_model.dart';
 import '../models/medical_record_model.dart';
 import 'appointment_exceptions.dart';
+import 'fabric_gateway_service.dart';
 
 class AppointmentService {
   final FirebaseFirestore? _customDb;
@@ -860,7 +861,23 @@ class MedicalRecordService {
   Future<void> addRecord(MedicalRecordModel record) async {
     final ref =
         _records(record.patientId).doc(record.id.isEmpty ? null : record.id);
-    await ref.set(record.toMap());
+    await ref.set(record.toClientFirestoreMap());
+
+    // Anchor to Hyperledger Fabric via Gateway if hash or file is available
+    if (record.fileHash.isNotEmpty || record.fileUrl.isNotEmpty) {
+      try {
+        await FabricGatewayService.instance.anchorRecord(
+          recordId: ref.id,
+          patientId: record.patientId,
+          metadata: {
+            'documentType': record.subtype.isNotEmpty ? record.subtype : 'MEDICAL_RECORD',
+            'facility': record.facility,
+          },
+        );
+      } catch (_) {
+        // Non-blocking in background anchoring
+      }
+    }
   }
 
   Future<MedicalRecordModel?> getRecord(

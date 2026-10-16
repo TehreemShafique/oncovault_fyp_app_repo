@@ -25,12 +25,11 @@ const FORBIDDEN_PHI_TERMS = [
 ];
 
 // Specific authorized gateway identities permitted to mutate patient consent.
-// Ordinary organization members (e.g. user1) are fail-closed and rejected.
+// Ordinary organization members (e.g. user1) and administrative credentials are fail-closed and rejected.
 const AUTHORIZED_GATEWAY_IDENTITIES = [
-    'oncovault-gateway',
-    'org1admin',
-    'org2admin'
+    'oncovault-gateway'
 ];
+const AUTHORIZED_GATEWAY_MSP = 'Org1MSP';
 
 class OncoVaultContract extends Contract {
     constructor() {
@@ -39,7 +38,7 @@ class OncoVaultContract extends Contract {
 
     async initLedger(ctx) {
         console.info('OncoVaultContract initialized successfully');
-        return JSON.stringify({ status: 'INITIALIZED', contract: 'OncoVaultContract', version: '1.1.0' });
+        return JSON.stringify({ status: 'INITIALIZED', contract: 'OncoVaultContract', version: '1.2.0' });
     }
 
     // =========================================================================
@@ -370,6 +369,10 @@ class OncoVaultContract extends Contract {
         this._validateCallerMsp(ctx);
         const callerMsp = ctx.clientIdentity.getMSPID();
 
+        if (callerMsp !== AUTHORIZED_GATEWAY_MSP) {
+            throw new Error(`Access Denied: Caller MSP '${callerMsp}' is not authorized as the OncoVault Gateway MSP (expected '${AUTHORIZED_GATEWAY_MSP}').`);
+        }
+
         // Extract Fabric CA enrollment ID or X509 Subject CN
         let enrollmentId = null;
         if (typeof ctx.clientIdentity.getAttributeValue === 'function') {
@@ -383,7 +386,7 @@ class OncoVaultContract extends Contract {
         }
 
         if (!enrollmentId || !AUTHORIZED_GATEWAY_IDENTITIES.includes(enrollmentId)) {
-            throw new Error(`Access Denied: Caller '${enrollmentId || 'UNKNOWN'}' from '${callerMsp}' is not an authorized OncoVault Gateway identity. Ordinary organization identities cannot mutate patient consent without verified gateway delegation.`);
+            throw new Error(`Access Denied: Caller '${enrollmentId || 'UNKNOWN'}' from '${callerMsp}' is not an authorized OncoVault Gateway identity. Ordinary organization identities and administrators cannot mutate patient consent without verified gateway delegation.`);
         }
 
         return {

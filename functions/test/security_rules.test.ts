@@ -519,4 +519,191 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
       );
     });
   });
+
+  // ── 7. BATCH 2B ANTI-TAMPER & BLOCKCHAIN PROOF SECURITY RULES ──
+  describe('Batch 2B Anti-Tamper & Blockchain Proof Security Rules', () => {
+    const patId = 'patient_proof_test';
+    const recId = 'rec_anti_tamper_001';
+    const now = new Date();
+
+    beforeEach(async () => {
+      // Seed user profile
+      await seedDoc(`users/${patId}`, {
+        uid: patId,
+        role: 'patient',
+        name: 'Proof Test Patient',
+        email: 'proof@test.com',
+      });
+    });
+
+    test('Legitimate clinical medical record creation without proof fields is allowed', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertSucceeds(
+        db.doc(`medical_records/${recId}`).set({
+          id: recId,
+          patientId: patId,
+          title: 'Blood CBC Panel',
+          type: 'report',
+          subtype: 'Laboratory',
+          facility: 'Oncology Clinic',
+          fileUrl: 'https://storage.googleapis.com/test/cbc.pdf',
+          fileHash: 'a'.repeat(64),
+          isArchived: false,
+          uploadedAt: now,
+        })
+      );
+    });
+
+    test('Malicious client attempting to inject fabricStatus on create is blocked', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`medical_records/${recId}`).set({
+          id: recId,
+          patientId: patId,
+          title: 'Forged Record',
+          type: 'report',
+          fileUrl: 'https://storage.googleapis.com/test/forged.pdf',
+          fileHash: 'b'.repeat(64),
+          fabricStatus: 'COMMITTED', // Forged privilege field
+          uploadedAt: now,
+        })
+      );
+    });
+
+    test('Malicious client attempting to inject fabricTxId on create is blocked', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`medical_records/${recId}`).set({
+          id: recId,
+          patientId: patId,
+          title: 'Forged Record 2',
+          type: 'report',
+          fileUrl: 'https://storage.googleapis.com/test/forged2.pdf',
+          fileHash: 'c'.repeat(64),
+          fabricTxId: 'fake_fabric_tx_id_999',
+          uploadedAt: now,
+        })
+      );
+    });
+
+    test('Direct client write to doctor_patient_consents is strictly blocked (fails closed)', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`doctor_patient_consents/${patId}_doc_1`).set({
+          id: `${patId}_doc_1`,
+          patientId: patId,
+          doctorId: 'doc_1',
+          scope: 'BLOOD_CANCER_RESEARCH',
+          status: 'granted',
+        })
+      );
+    });
+
+    test('Client access to internal gateway_operations is completely denied (read & write)', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc('gateway_operations/op_secret_123').get()
+      );
+      await assertFails(
+        db.doc('gateway_operations/op_secret_123').set({
+          status: 'COMMITTED',
+        })
+      );
+    });
+
+    test('Malicious client attempting to tamper with fabricStatus on update is blocked', async () => {
+      await seedDoc(`medical_records/${recId}`, {
+        id: recId,
+        patientId: patId,
+        title: 'Original Record',
+        type: 'report',
+        fileUrl: 'https://storage.googleapis.com/test/original.pdf',
+        fileHash: 'a'.repeat(64),
+        uploadedAt: now,
+      });
+
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`medical_records/${recId}`).update({
+          fabricStatus: 'COMMITTED',
+        })
+      );
+    });
+
+    test('Malicious client attempting to tamper with blockchainProof on update is blocked', async () => {
+      await seedDoc(`medical_records/${recId}`, {
+        id: recId,
+        patientId: patId,
+        title: 'Original Record',
+        type: 'report',
+        fileUrl: 'https://storage.googleapis.com/test/original.pdf',
+        fileHash: 'a'.repeat(64),
+        uploadedAt: now,
+      });
+
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`medical_records/${recId}`).update({
+          blockchainProof: {
+            txId: 'fake_tx_123',
+            valid: true,
+          },
+        })
+      );
+    });
+
+    test('Malicious patient attempting to write to another patient nested medical record is blocked', async () => {
+      await seedDoc('users/patient_2', {
+        uid: 'patient_2',
+        role: 'patient',
+        name: 'Foreign Patient',
+      });
+      const foreignPatientContext = testEnv.authenticatedContext('patient_2');
+      const db = foreignPatientContext.firestore();
+
+      await assertFails(
+        db.doc(`patients/${patId}/medicalRecords/${recId}`).set({
+          id: recId,
+          patientId: patId,
+          title: 'Unauthorized Nested Record',
+          type: 'report',
+          fileUrl: 'https://storage.googleapis.com/test/unauth.pdf',
+          fileHash: 'a'.repeat(64),
+          uploadedAt: now,
+        })
+      );
+    });
+
+    test('Patient attempting to inject fabricStatus in nested medical record is blocked', async () => {
+      const patientContext = testEnv.authenticatedContext(patId);
+      const db = patientContext.firestore();
+
+      await assertFails(
+        db.doc(`patients/${patId}/medicalRecords/${recId}`).set({
+          id: recId,
+          patientId: patId,
+          title: 'Forged Nested Record',
+          type: 'report',
+          fileUrl: 'https://storage.googleapis.com/test/nested.pdf',
+          fileHash: 'a'.repeat(64),
+          fabricStatus: 'COMMITTED',
+          uploadedAt: now,
+        })
+      );
+    });
+  });
 });

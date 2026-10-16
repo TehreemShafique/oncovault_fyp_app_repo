@@ -1,6 +1,6 @@
 {
   "name": "oncovault-chaincode",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "OncoVault Hyperledger Fabric Smart Contract for Record Integrity and Consent Management",
   "main": "index.js",
   "engines": {

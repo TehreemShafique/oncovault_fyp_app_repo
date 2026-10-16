@@ -1,0 +1,20 @@
+# Hyperledger Fabric MSP, Certificates, Private Keys, and Secrets
+*.pem
+*.key
+*.crt
+*.block
+*.tar.gz
+*.secret
+*.env*
+**/msp/
+**/tls/
+**/wallet/
+**/keystore/
+**/signcerts/
+**/usercerts/
+**/admincerts/
+**/cacerts/
+**/tlscacerts/
+**/intermediatecerts/
+**/secrets/
+**/node_modules/

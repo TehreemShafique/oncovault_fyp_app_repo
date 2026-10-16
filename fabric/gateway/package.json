@@ -1,0 +1,50 @@
+{
+  "name": "oncovault-fabric-gateway",
+  "version": "1.0.0",
+  "description": "OncoVault Trusted Hyperledger Fabric Gateway Backend",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "mocha -r ts-node/register \"test/unit/**/*.test.ts\" --reporter spec --timeout 10000 --exit",
+    "test:live": "mocha -r ts-node/register \"test/live/**/*.test.ts\" --reporter spec --timeout 30000 --exit",
+    "test:e2e": "mocha -r ts-node/register \"test/e2e/**/*.test.ts\" --reporter spec --timeout 60000 --exit",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "oncovault",
+    "hyperledger-fabric",
+    "fabric-gateway",
+    "ehr",
+    "healthcare"
+  ],
+  "author": "OncoVault FYP Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.9",
+    "@hyperledger/fabric-gateway": "~1.5.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.16",
+    "@types/express": "^4.17.21",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^18.19.0",
+    "@types/sinon": "^17.0.3",
+    "@types/supertest": "^6.0.2",
+    "chai": "^4.4.1",
+    "mocha": "^10.4.0",
+    "rimraf": "^5.0.7",
+    "sinon": "^18.0.0",
+    "supertest": "^7.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

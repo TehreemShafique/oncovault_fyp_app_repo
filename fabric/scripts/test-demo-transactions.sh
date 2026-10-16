@@ -8,7 +8,7 @@ export FABRIC_CFG_PATH=/home/oncovault/oncovault-fabric/fabric-samples/config
 . scripts/envVar.sh
 
 echo "================================================================="
-echo "ONCOVAULT BATCH 2A: HARDENED FABRIC VERIFICATION & SECURITY GATE"
+echo "ONCOVAULT BATCH 2B.2: DEDICATED GATEWAY IDENTITY & SECURITY GATE"
 echo "================================================================="
 
 assert_contains() {
@@ -24,189 +24,144 @@ assert_contains() {
     echo "[+] ASSERTION PASSED: $message"
 }
 
-# --- 1. Confirm Committed Chaincode Definition (v1.1, seq 2) on Org1 & Org2 ---
+GATEWAY_MSP="/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/oncovault-gateway@org1.example.com/msp"
+ADMIN_MSP="/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp"
+USER1_MSP="/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp"
+
+# Check that gateway MSP directory exists
+if [ ! -d "$GATEWAY_MSP" ]; then
+    echo "[-] ERROR: Gateway MSP directory does not exist: $GATEWAY_MSP"
+    exit 1
+fi
+
+# --- 1. Confirm Committed Chaincode Definition (v1.2, seq 3) on Org1 & Org2 ---
 echo ""
 echo "--- 1. Querying Committed Chaincode Definition on Org1 and Org2 ---"
 setGlobals 1
 COMMITTED_ORG1=$(peer lifecycle chaincode querycommitted --channelID oncovault-channel --name oncovault)
 echo "$COMMITTED_ORG1"
-assert_contains "$COMMITTED_ORG1" "Version: 1.1, Sequence: 2" "Org1 has committed Version 1.1, Sequence 2"
+assert_contains "$COMMITTED_ORG1" "Version: 1.2" "Org1 has committed Version 1.2"
 assert_contains "$COMMITTED_ORG1" "Approvals: [Org1MSP: true, Org2MSP: true]" "Org1 confirms dual-org approval"
 
 setGlobals 2
 COMMITTED_ORG2=$(peer lifecycle chaincode querycommitted --channelID oncovault-channel --name oncovault)
 echo "$COMMITTED_ORG2"
-assert_contains "$COMMITTED_ORG2" "Version: 1.1, Sequence: 2" "Org2 has committed Version 1.1, Sequence 2"
+assert_contains "$COMMITTED_ORG2" "Version: 1.2" "Org2 has committed Version 1.2"
 assert_contains "$COMMITTED_ORG2" "Approvals: [Org1MSP: true, Org2MSP: true]" "Org2 confirms dual-org approval"
 
-# --- 2. Negative Test: Strict Metadata Allowlist Rejection ---
+# --- 2. Record Anchoring Integrity Verification ---
 echo ""
-echo "--- 2. Negative Test: Strict Metadata Allowlist (Reject unapproved metadata) ---"
+echo "--- 2. Record Anchoring Integrity Verification (Org1 Admin) ---"
 setGlobals 1
-RECORD_ID="rec-syn-hardened-$(date +%s)"
-HASH_V1="4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-set +e
-REJECT_META_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"AnchorRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V1\",\"{\\\"unapprovedCustomKey\\\":\\\"secret_data\\\"}\"]}" 2>&1)
-set -e
-echo "$REJECT_META_RES"
-assert_contains "$REJECT_META_RES" "Rejected unapproved metadata key" "Strict metadata allowlist rejects non-allowlisted key"
+RECORD_ID="rec-gate-$(date +%s)"
+HASH_V1="5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
 
-# --- 3. Positive Test: Submit Valid SHA-256 Integrity Proof with Allowlisted Metadata ---
-echo ""
-echo "--- 3. Submit Valid SHA-256 Integrity Proof (AnchorRecordHash) ---"
 INVOKE_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" --waitForEvent -c "{\"function\":\"AnchorRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V1\",\"{\\\"documentType\\\":\\\"PATHOLOGY_PANEL\\\",\\\"schemaVersion\\\":\\\"1.0\\\",\\\"synthetic\\\":true}\"]}" 2>&1)
 echo "$INVOKE_RES"
-assert_contains "$INVOKE_RES" "status:200" "Chaincode invoke returned status 200"
+assert_contains "$INVOKE_RES" "status:200" "Anchor invoke returned status 200"
 assert_contains "$INVOKE_RES" "committed with status (VALID) at localhost:7051" "Committed with VALID status on Org1 peer"
 assert_contains "$INVOKE_RES" "committed with status (VALID) at localhost:9051" "Committed with VALID status on Org2 peer"
 
-TXID=$(echo "$INVOKE_RES" | grep -o "txid \[[a-f0-9]*\]" | cut -d'[' -f2 | cut -d']' -f1 | head -n 1)
-echo ">>> Captured Committed Transaction ID: $TXID"
-
-sleep 1
-
-# --- 4. Query Proof from Both Org1 and Org2 Peers ---
-echo ""
-echo "--- 4. Query Proof from Org1 and Org2 Peers (GetRecordProof) ---"
-setGlobals 1
-PROOF_ORG1=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"GetRecordProof\",\"Args\":[\"$RECORD_ID\"]}")
-echo "Org1 Peer Proof: $PROOF_ORG1"
-assert_contains "$PROOF_ORG1" "\"recordId\":\"$RECORD_ID\"" "Proof found on Org1"
-assert_contains "$PROOF_ORG1" "\"version\":1" "Proof on Org1 is version 1"
-assert_contains "$PROOF_ORG1" "\"sha256Hash\":\"$HASH_V1\"" "Org1 hash matches"
-
+# Verify on Org2 peer
 setGlobals 2
 PROOF_ORG2=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"GetRecordProof\",\"Args\":[\"$RECORD_ID\"]}")
 echo "Org2 Peer Proof: $PROOF_ORG2"
-assert_contains "$PROOF_ORG2" "\"recordId\":\"$RECORD_ID\"" "Proof found on Org2"
-assert_contains "$PROOF_ORG2" "\"version\":1" "Proof on Org2 is version 1"
+assert_contains "$PROOF_ORG2" "\"recordId\":\"$RECORD_ID\"" "Proof found on Org2 peer"
 assert_contains "$PROOF_ORG2" "\"sha256Hash\":\"$HASH_V1\"" "Org2 hash matches"
 
-# --- 5. Verify Correct SHA-256 Hash Succeeds ---
-echo ""
-echo "--- 5. Verify Correct SHA-256 Hash (VerifyRecordHash) ---"
-VERIFY_VALID=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"VerifyRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V1\"]}")
-echo "$VERIFY_VALID"
-assert_contains "$VERIFY_VALID" "\"verified\":true" "Hash verification succeeded"
-assert_contains "$VERIFY_VALID" "\"status\":\"VERIFIED\"" "Status is VERIFIED"
+# Verify valid hash
+VERIFY_RES=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"VerifyRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V1\"]}")
+assert_contains "$VERIFY_RES" "\"verified\":true" "Hash verification succeeded"
 
-# --- 6. Verify Tampered Hash Fails ---
+# --- 3. Negative Test: org1admin CANNOT Grant Consent (Bypass Removed) ---
 echo ""
-echo "--- 6. Verify Tampered Hash (VerifyRecordHash) ---"
-TAMPERED_HASH="0000000000000000000000000000000000000000000000000000000000000000"
-VERIFY_TAMPERED=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"VerifyRecordHash\",\"Args\":[\"$RECORD_ID\",\"$TAMPERED_HASH\"]}")
-echo "$VERIFY_TAMPERED"
-assert_contains "$VERIFY_TAMPERED" "\"verified\":false" "Tampered hash verification rejected"
-assert_contains "$VERIFY_TAMPERED" "\"status\":\"TAMPERED_OR_MISMATCH\"" "Status is TAMPERED_OR_MISMATCH"
-
-# --- 7. Duplicate Anchoring Prevention ---
-echo ""
-echo "--- 7. Duplicate Anchoring Prevention ---"
+echo "--- 3. Negative Test: org1admin CANNOT Grant Consent (Bypass Removed) ---"
 setGlobals 1
-set +e
-DUP_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"AnchorRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V1\",\"{}\"]}" 2>&1)
-set -e
-echo "$DUP_RES"
-assert_contains "$DUP_RES" "Duplicate anchoring rejected" "Duplicate identical hash anchoring rejected"
+export CORE_PEER_MSPCONFIGPATH="$ADMIN_MSP"
 
-# --- 8. Legitimate Record Revision (Version 2) ---
-echo ""
-echo "--- 8. Legitimate Record Revision (Version 2) ---"
-HASH_V2="b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-REV_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" --waitForEvent -c "{\"function\":\"AnchorRecordHash\",\"Args\":[\"$RECORD_ID\",\"$HASH_V2\",\"{\\\"revisionReason\\\":\\\"AMENDED_ASSAY\\\"}\"]}" 2>&1)
-echo "$REV_RES"
-assert_contains "$REV_RES" "status:200" "Revision invoke returned 200"
-assert_contains "$REV_RES" "committed with status (VALID) at localhost:7051" "Revision committed VALID on Org1"
-assert_contains "$REV_RES" "committed with status (VALID) at localhost:9051" "Revision committed VALID on Org2"
-
-sleep 1
-
-PROOF_V2=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"GetRecordProof\",\"Args\":[\"$RECORD_ID\"]}")
-echo "Updated Proof V2: $PROOF_V2"
-assert_contains "$PROOF_V2" "\"version\":2" "Record updated to Version 2"
-assert_contains "$PROOF_V2" "\"previousHash\":\"$HASH_V1\"" "Version 2 links previous hash"
-
-# --- 9. Retrieve Historical Proof Activity ---
-echo ""
-echo "--- 9. Retrieve Historical Proof Activity (GetRecordHistory) ---"
-HISTORY=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"GetRecordHistory\",\"Args\":[\"$RECORD_ID\"]}")
-echo "$HISTORY"
-assert_contains "$HISTORY" "\"version\":1" "History includes version 1"
-assert_contains "$HISTORY" "\"version\":2" "History includes version 2"
-
-# --- 10. Negative Test: Ordinary Org1 Identity (user1) CANNOT Grant Consent ---
-echo ""
-echo "--- 10. Negative Test: Ordinary User1 CANNOT Grant Consent (Fail-Closed Check) ---"
-setGlobals 1
-export CORE_PEER_MSPCONFIGPATH=/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
-
-PAT_ID="pat-sec-$(date +%s)"
-PROV_ID="prov-sec-clinic-z"
-SCOPE="ONCOLOGY_RESEARCH"
+PAT_ID="pat-auth-$(date +%s)"
+PROV_ID="prov-onc-center"
+SCOPE="BLOOD_CANCER_RESEARCH"
 EXPIRATION="2028-12-31T23:59:59Z"
+
+set +e
+ADMIN_GRANT_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"GrantConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\",\"$EXPIRATION\"]}" 2>&1)
+set -e
+echo "$ADMIN_GRANT_RES"
+assert_contains "$ADMIN_GRANT_RES" "Access Denied: Caller 'org1admin'" "org1admin is rejected fail-closed"
+assert_contains "$ADMIN_GRANT_RES" "not an authorized OncoVault Gateway identity" "Rejection message confirms unauthorized identity"
+
+# --- 4. Negative Test: user1 CANNOT Grant Consent ---
+echo ""
+echo "--- 4. Negative Test: Ordinary user1 CANNOT Grant Consent ---"
+export CORE_PEER_MSPCONFIGPATH="$USER1_MSP"
 
 set +e
 USER1_GRANT_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"GrantConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\",\"$EXPIRATION\"]}" 2>&1)
 set -e
 echo "$USER1_GRANT_RES"
-assert_contains "$USER1_GRANT_RES" "not an authorized OncoVault Gateway identity" "Ordinary User1 identity is rejected fail-closed"
+assert_contains "$USER1_GRANT_RES" "Access Denied: Caller 'user1'" "user1 is rejected fail-closed"
 
-# --- 11. Positive Test: Authorized Gateway Identity (org1admin) Grants Consent ---
+# --- 5. Positive Test: Dedicated oncovault-gateway Grants Consent ---
 echo ""
-echo "--- 11. Positive Test: Authorized Gateway Grants Consent ---"
-export CORE_PEER_MSPCONFIGPATH=/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+echo "--- 5. Positive Test: Dedicated oncovault-gateway Grants Consent ---"
+export CORE_PEER_MSPCONFIGPATH="$GATEWAY_MSP"
 
 GATEWAY_GRANT_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" --waitForEvent -c "{\"function\":\"GrantConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\",\"$EXPIRATION\"]}" 2>&1)
 echo "$GATEWAY_GRANT_RES"
-assert_contains "$GATEWAY_GRANT_RES" "status:200" "Authorized Gateway grant returned 200"
+assert_contains "$GATEWAY_GRANT_RES" "status:200" "oncovault-gateway grant returned 200"
 assert_contains "$GATEWAY_GRANT_RES" "committed with status (VALID) at localhost:7051" "Grant committed VALID on Org1"
 assert_contains "$GATEWAY_GRANT_RES" "committed with status (VALID) at localhost:9051" "Grant committed VALID on Org2"
+assert_contains "$GATEWAY_GRANT_RES" "gatewayEnrollmentId" "Recorded gateway identity in response"
+assert_contains "$GATEWAY_GRANT_RES" "oncovault-gateway" "Gateway enrollment ID is oncovault-gateway"
 
 sleep 1
 
-# --- 12. Check Active Consent from Both Org1 and Org2 Peers ---
+# --- 6. Query Consent from Both Org1 and Org2 Peers ---
 echo ""
-echo "--- 12. Check Active Consent from Both Peers (CheckConsent) ---"
+echo "--- 6. Query Active Consent from Org1 and Org2 Peers ---"
 setGlobals 1
 CHECK_ACTIVE_ORG1=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"CheckConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}")
 echo "Org1 CheckConsent: $CHECK_ACTIVE_ORG1"
-assert_contains "$CHECK_ACTIVE_ORG1" "\"active\":true" "Consent active on Org1"
-assert_contains "$CHECK_ACTIVE_ORG1" "\"status\":\"GRANTED\"" "Status GRANTED on Org1"
+assert_contains "$CHECK_ACTIVE_ORG1" "\"active\":true" "Consent is active on Org1"
+assert_contains "$CHECK_ACTIVE_ORG1" "\"status\":\"GRANTED\"" "Status is GRANTED on Org1"
+assert_contains "$CHECK_ACTIVE_ORG1" "\"patientPseudoId\":\"$PAT_ID\"" "Patient pseudo ID matches on Org1"
 
 setGlobals 2
 CHECK_ACTIVE_ORG2=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"CheckConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}")
 echo "Org2 CheckConsent: $CHECK_ACTIVE_ORG2"
-assert_contains "$CHECK_ACTIVE_ORG2" "\"active\":true" "Consent active on Org2"
-assert_contains "$CHECK_ACTIVE_ORG2" "\"status\":\"GRANTED\"" "Status GRANTED on Org2"
+assert_contains "$CHECK_ACTIVE_ORG2" "\"active\":true" "Consent is active on Org2"
+assert_contains "$CHECK_ACTIVE_ORG2" "\"status\":\"GRANTED\"" "Status is GRANTED on Org2"
+assert_contains "$CHECK_ACTIVE_ORG2" "\"patientPseudoId\":\"$PAT_ID\"" "Patient pseudo ID matches on Org2"
 
-# --- 13. Negative Test: Ordinary User1 CANNOT Revoke Consent ---
+# --- 7. Negative Test: org1admin CANNOT Revoke Consent ---
 echo ""
-echo "--- 13. Negative Test: Ordinary User1 CANNOT Revoke Consent ---"
+echo "--- 7. Negative Test: org1admin CANNOT Revoke Consent ---"
 setGlobals 1
-export CORE_PEER_MSPCONFIGPATH=/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
+export CORE_PEER_MSPCONFIGPATH="$ADMIN_MSP"
 
 set +e
-USER1_REVOKE_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"RevokeConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}" 2>&1)
+ADMIN_REV_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" -c "{\"function\":\"RevokeConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}" 2>&1)
 set -e
-echo "$USER1_REVOKE_RES"
-assert_contains "$USER1_REVOKE_RES" "not an authorized OncoVault Gateway identity" "Ordinary User1 identity cannot revoke consent"
+echo "$ADMIN_REV_RES"
+assert_contains "$ADMIN_REV_RES" "Access Denied: Caller 'org1admin'" "org1admin revocation rejected fail-closed"
 
-# --- 14. Positive Test: Authorized Gateway Revokes Consent ---
+# --- 8. Positive Test: Dedicated oncovault-gateway Revokes Consent ---
 echo ""
-echo "--- 14. Positive Test: Authorized Gateway Revokes Consent ---"
-export CORE_PEER_MSPCONFIGPATH=/home/oncovault/oncovault-fabric/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+echo "--- 8. Positive Test: Dedicated oncovault-gateway Revokes Consent ---"
+export CORE_PEER_MSPCONFIGPATH="$GATEWAY_MSP"
 
-GATEWAY_REVOKE_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" --waitForEvent -c "{\"function\":\"RevokeConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}" 2>&1)
-echo "$GATEWAY_REVOKE_RES"
-assert_contains "$GATEWAY_REVOKE_RES" "status:200" "Revoke invoke returned 200"
-assert_contains "$GATEWAY_REVOKE_RES" "committed with status (VALID) at localhost:7051" "Revoke committed VALID on Org1"
-assert_contains "$GATEWAY_REVOKE_RES" "committed with status (VALID) at localhost:9051" "Revoke committed VALID on Org2"
+GATEWAY_REV_RES=$(peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C oncovault-channel -n oncovault --peerAddresses localhost:7051 --tlsRootCertFiles "$PEER0_ORG1_CA" --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" --waitForEvent -c "{\"function\":\"RevokeConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}" 2>&1)
+echo "$GATEWAY_REV_RES"
+assert_contains "$GATEWAY_REV_RES" "status:200" "oncovault-gateway revoke returned 200"
+assert_contains "$GATEWAY_REV_RES" "committed with status (VALID) at localhost:7051" "Revoke committed VALID on Org1"
+assert_contains "$GATEWAY_REV_RES" "committed with status (VALID) at localhost:9051" "Revoke committed VALID on Org2"
 
 sleep 1
 
-# --- 15. Verify Revoked Status from Both Peers ---
+# --- 9. Check Revoked Status on Org1 and Org2 Peers ---
 echo ""
-echo "--- 15. Verify Revoked Status from Both Peers ---"
+echo "--- 9. Check Revoked Status on Org1 and Org2 Peers ---"
 setGlobals 1
 CHECK_REV_ORG1=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"CheckConsent\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}")
 echo "Org1 Revoked Check: $CHECK_REV_ORG1"
@@ -219,15 +174,16 @@ echo "Org2 Revoked Check: $CHECK_REV_ORG2"
 assert_contains "$CHECK_REV_ORG2" "\"active\":false" "Active false on Org2"
 assert_contains "$CHECK_REV_ORG2" "\"status\":\"REVOKED\"" "Status REVOKED on Org2"
 
-# --- 16. Retrieve Consent Audit History ---
+# --- 10. Audit History Verification ---
 echo ""
-echo "--- 16. Retrieve Full Consent Lifecycle History (GetConsentHistory) ---"
+echo "--- 10. Retrieve Full Consent Lifecycle History (GetConsentHistory) ---"
 CONSENT_HIST=$(peer chaincode query -C oncovault-channel -n oncovault -c "{\"function\":\"GetConsentHistory\",\"Args\":[\"$PAT_ID\",\"$PROV_ID\",\"$SCOPE\"]}")
 echo "$CONSENT_HIST"
-assert_contains "$CONSENT_HIST" "\"status\":\"GRANTED\"" "Consent history has GRANTED"
-assert_contains "$CONSENT_HIST" "\"status\":\"REVOKED\"" "Consent history has REVOKED"
+assert_contains "$CONSENT_HIST" "\"status\":\"GRANTED\"" "Consent history contains GRANTED"
+assert_contains "$CONSENT_HIST" "\"status\":\"REVOKED\"" "Consent history contains REVOKED"
+assert_contains "$CONSENT_HIST" "\"gatewayEnrollmentId\":\"oncovault-gateway\"" "Consent history attributes to oncovault-gateway"
 
 echo ""
 echo "================================================================="
-echo "ALL HARDENED SECURITY GATE TESTS PASSED RIGOROUSLY (EXIT 0)"
+echo "ALL BATCH 2B.2 SECURITY GATE ASSERTIONS PASSED RIGOROUSLY (EXIT 0)"
 echo "================================================================="

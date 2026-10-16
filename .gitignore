@@ -52,3 +52,15 @@ app.*.map.json
 
 # OncoVault AI datasets
 oncovault_ai/data/
+
+# Hyperledger Fabric MSP, Certificates, Private Keys, and Secrets
+*.pem
+*.key
+*.crt
+*.block
+*.tar.gz
+*.secret
+**/msp/
+**/wallet/
+**/keystore/
+fabric/**/node_modules/

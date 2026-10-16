@@ -36,6 +36,11 @@ class MedicalRecordModel {
   final DateTime uploadedAt;
   final bool isArchived;
   final String fileHash;     // ← added for integrity verification
+  final String? fabricTxId;
+  final String? fabricStatus;
+  final int? fabricVersion;
+  final DateTime? fabricTimestamp;
+  final String? opaqueRecordKey;
 
   MedicalRecordModel({
     required this.id,
@@ -51,10 +56,18 @@ class MedicalRecordModel {
     this.summary     = '',
     required this.uploadedAt,
     this.isArchived  = false,
-    this.fileHash    = '',   // ← defaults to empty
+    this.fileHash    = '',
+    this.fabricTxId,
+    this.fabricStatus,
+    this.fabricVersion,
+    this.fabricTimestamp,
+    this.opaqueRecordKey,
   });
 
-  Map<String, dynamic> toMap() => {
+  /// Serializes medical record metadata for client-side Firestore creation/update.
+  /// Privileged blockchain proof attributes ('fabricStatus', 'fabricTxId', etc.)
+  /// are strictly omitted so that client operations conform to anti-tamper security rules.
+  Map<String, dynamic> toClientFirestoreMap() => {
     'id':          id,
     'patientId':   patientId,
     'title':       title,
@@ -69,6 +82,20 @@ class MedicalRecordModel {
     'uploadedAt':  Timestamp.fromDate(uploadedAt),
     'isArchived':  isArchived,
     'fileHash':    fileHash,
+  };
+
+  /// Serializes record metadata. Blockchain proof fields are omitted from client writes
+  /// to ensure compliance with Firestore security rules.
+  Map<String, dynamic> toMap() => toClientFirestoreMap();
+
+  /// Full serialization including blockchain proof metadata (for local caching or tests).
+  Map<String, dynamic> toFullMap() => {
+    ...toClientFirestoreMap(),
+    if (fabricTxId != null) 'fabricTxId': fabricTxId,
+    if (fabricStatus != null) 'fabricStatus': fabricStatus,
+    if (fabricVersion != null) 'fabricVersion': fabricVersion,
+    if (fabricTimestamp != null) 'fabricTimestamp': Timestamp.fromDate(fabricTimestamp!),
+    if (opaqueRecordKey != null) 'opaqueRecordKey': opaqueRecordKey,
   };
 
   factory MedicalRecordModel.fromMap(Map<String, dynamic> m) =>
@@ -87,7 +114,42 @@ class MedicalRecordModel {
         uploadedAt:  (m['uploadedAt'] as Timestamp).toDate(),
         isArchived:  m['isArchived'] ?? false,
         fileHash:    m['fileHash']  ?? '',
+        fabricTxId:  m['fabricTxId'],
+        fabricStatus: m['fabricStatus'],
+        fabricVersion: m['fabricVersion'] is int ? m['fabricVersion'] : int.tryParse(m['fabricVersion']?.toString() ?? ''),
+        fabricTimestamp: m['fabricTimestamp'] is Timestamp
+            ? (m['fabricTimestamp'] as Timestamp).toDate()
+            : (m['fabricTimestamp'] is String ? DateTime.tryParse(m['fabricTimestamp']) : null),
+        opaqueRecordKey: m['opaqueRecordKey'],
       );
+
+  MedicalRecordModel copyWithProof({
+    String? fabricTxId,
+    String? fabricStatus,
+    int? fabricVersion,
+    DateTime? fabricTimestamp,
+    String? opaqueRecordKey,
+  }) => MedicalRecordModel(
+    id: id,
+    patientId: patientId,
+    title: title,
+    type: type,
+    subtype: subtype,
+    facility: facility,
+    doctorName: doctorName,
+    date: date,
+    fileUrl: fileUrl,
+    fileType: fileType,
+    summary: summary,
+    uploadedAt: uploadedAt,
+    isArchived: isArchived,
+    fileHash: fileHash,
+    fabricTxId: fabricTxId ?? this.fabricTxId,
+    fabricStatus: fabricStatus ?? this.fabricStatus,
+    fabricVersion: fabricVersion ?? this.fabricVersion,
+    fabricTimestamp: fabricTimestamp ?? this.fabricTimestamp,
+    opaqueRecordKey: opaqueRecordKey ?? this.opaqueRecordKey,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────

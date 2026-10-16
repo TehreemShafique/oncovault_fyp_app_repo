@@ -69,16 +69,16 @@ describe('OncoVaultContract Unit Tests (Hardened Security Gate)', () => {
 
         mockClientIdentity = {
             getMSPID: sinon.stub().returns('Org1MSP'),
-            getID: sinon.stub().returns('x509::/C=US/ST=North Carolina/O=Hyperledger/OU=admin/CN=org1admin::/C=US/ST=North Carolina/L=Durham/O=org1.example.com/CN=ca.org1.example.com'),
+            getID: sinon.stub().returns('x509::/C=US/ST=North Carolina/O=Hyperledger/OU=client/CN=oncovault-gateway::/C=US/ST=North Carolina/L=Durham/O=org1.example.com/CN=ca.org1.example.com'),
             getAttributeValue: sinon.stub().callsFake((attr) => {
-                if (attr === 'hf.EnrollmentID') return 'org1admin';
-                if (attr === 'hf.Type') return 'admin';
+                if (attr === 'hf.EnrollmentID') return 'oncovault-gateway';
+                if (attr === 'hf.Type') return 'client';
                 return null;
             }),
             getX509Certificate: sinon.stub().returns({
                 subject: {
-                    commonName: 'org1admin',
-                    organizationalUnitName: 'admin'
+                    commonName: 'oncovault-gateway',
+                    organizationalUnitName: 'client'
                 }
             })
         };
@@ -247,7 +247,7 @@ describe('OncoVaultContract Unit Tests (Hardened Security Gate)', () => {
     });
 
     describe('Consent Management & Security Boundaries', () => {
-        it('should allow authorized gateway identity to grant consent', async () => {
+        it('should allow authorized dedicated oncovault-gateway identity to grant consent', async () => {
             const resStr = await contract.GrantConsent(ctx, VALID_PATIENT_PSEUDO, VALID_PROVIDER_PSEUDO, VALID_SCOPE, '2028-12-31T23:59:59Z');
             const consent = JSON.parse(resStr);
 
@@ -256,8 +256,49 @@ describe('OncoVaultContract Unit Tests (Hardened Security Gate)', () => {
             expect(consent.scope).to.equal(VALID_SCOPE);
             expect(consent.status).to.equal('GRANTED');
             expect(consent.authBoundary.gatewayVerified).to.be.true;
-            expect(consent.authBoundary.gatewayEnrollmentId).to.equal('org1admin');
+            expect(consent.authBoundary.gatewayEnrollmentId).to.equal('oncovault-gateway');
             expect(consent.authBoundary.policy).to.equal('GATEWAY_DELEGATED_PATIENT_AUTH');
+        });
+
+        it('should fail-closed and reject org1admin administrative identity from granting consent', async () => {
+            mockClientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('org1admin');
+            mockClientIdentity.getX509Certificate.returns({
+                subject: { commonName: 'org1admin', organizationalUnitName: 'admin' }
+            });
+
+            try {
+                await contract.GrantConsent(ctx, VALID_PATIENT_PSEUDO, VALID_PROVIDER_PSEUDO, VALID_SCOPE, '2028-12-31T23:59:59Z');
+                expect.fail('Should have rejected org1admin from granting consent');
+            } catch (err) {
+                expect(err.message).to.include('Access Denied: Caller \'org1admin\'');
+                expect(err.message).to.include('not an authorized OncoVault Gateway identity');
+            }
+        });
+
+        it('should fail-closed and reject org2admin administrative identity from granting consent', async () => {
+            mockClientIdentity.getMSPID.returns('Org2MSP');
+            mockClientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('org2admin');
+            mockClientIdentity.getX509Certificate.returns({
+                subject: { commonName: 'org2admin', organizationalUnitName: 'admin' }
+            });
+
+            try {
+                await contract.GrantConsent(ctx, VALID_PATIENT_PSEUDO, VALID_PROVIDER_PSEUDO, VALID_SCOPE, '2028-12-31T23:59:59Z');
+                expect.fail('Should have rejected org2admin from granting consent');
+            } catch (err) {
+                expect(err.message).to.include('Access Denied');
+            }
+        });
+
+        it('should reject oncovault-gateway identity presenting Org2MSP instead of Org1MSP', async () => {
+            mockClientIdentity.getMSPID.returns('Org2MSP');
+
+            try {
+                await contract.GrantConsent(ctx, VALID_PATIENT_PSEUDO, VALID_PROVIDER_PSEUDO, VALID_SCOPE, '2028-12-31T23:59:59Z');
+                expect.fail('Should have rejected Org2MSP gateway caller');
+            } catch (err) {
+                expect(err.message).to.include('Caller MSP \'Org2MSP\' is not authorized as the OncoVault Gateway MSP');
+            }
         });
 
         it('should fail-closed and reject ordinary enrolled identity (e.g. user1) from granting consent', async () => {

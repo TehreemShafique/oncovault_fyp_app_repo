@@ -9,13 +9,15 @@ import '../../../../models/patient_profile_model.dart';
 import '../../../../core/services/hashing_service.dart';
 import '../../../../core/services/cloud_storage_service.dart';
 import '../../../../core/utils/hash_comparator.dart';
+import '../../../../services/fabric_gateway_service.dart';
 
 class EhrRepositoryImpl {
-  final FirebaseFirestore   _db             = FirebaseFirestore.instance;
-  final HashingService      _hashingService = HashingService.instance;
-  final CloudStorageService _cloudStorage   = CloudStorageService.instance;
-  final HashComparator      _comparator     = HashComparator();
-  final Uuid                _uuid           = const Uuid();
+  final FirebaseFirestore    _db             = FirebaseFirestore.instance;
+  final HashingService       _hashingService = HashingService.instance;
+  final CloudStorageService  _cloudStorage   = CloudStorageService.instance;
+  final HashComparator       _comparator     = HashComparator();
+  final FabricGatewayService _fabricGateway  = FabricGatewayService.instance;
+  final Uuid                 _uuid           = const Uuid();
 
   EhrRepositoryImpl._internal();
   static final EhrRepositoryImpl instance = EhrRepositoryImpl._internal();
@@ -64,9 +66,32 @@ class EhrRepositoryImpl {
       fileHash   : fileHash,
     );
 
-    // Step 4: Save to Firestore
-    await _records.doc(recordId).set(record.toMap());
-    return record;
+    // Step 4: Save to Firestore (authorized clinical fields only; proof fields strictly omitted)
+    await _records.doc(recordId).set(record.toClientFirestoreMap());
+
+    // Step 5: Anchor on Hyperledger Fabric via Trusted Gateway
+    try {
+      final proof = await _fabricGateway.anchorRecord(
+        recordId: recordId,
+        patientId: patientId,
+        metadata: {
+          'documentType': subtype.isNotEmpty ? subtype : 'MEDICAL_RECORD',
+          'facility': facility,
+        },
+      );
+      return record.copyWithProof(
+        fabricTxId: proof.txId,
+        fabricStatus: 'COMMITTED',
+        fabricVersion: proof.version,
+        fabricTimestamp: DateTime.tryParse(proof.timestamp),
+        opaqueRecordKey: proof.recordId,
+      );
+    } catch (_) {
+      // Anchoring recorded as pending if gateway is offline/busy
+      return record.copyWithProof(
+        fabricStatus: 'PENDING',
+      );
+    }
   }
 
   // ── Fetch all records ─────────────────────────────────────────
@@ -89,6 +114,22 @@ class EhrRepositoryImpl {
     if (record.fileHash.isEmpty) {
       return const IntegrityResult(status: IntegrityStatus.unverified);
     }
+    // 1. Verify against real Fabric ledger via Gateway
+    try {
+      final fabricRes = await _fabricGateway.verifyRecord(
+        recordId: record.id,
+        patientId: record.patientId,
+        expectedSha256: record.fileHash,
+      );
+      if (fabricRes.status == FabricVerificationStatus.verified) {
+        return const IntegrityResult(status: IntegrityStatus.verified);
+      } else if (fabricRes.status == FabricVerificationStatus.tamperedOrMismatch) {
+        return const IntegrityResult(status: IntegrityStatus.tampered);
+      }
+    } catch (_) {
+      // Fall back to local byte comparison if gateway is offline
+    }
+
     return await _comparator.verifyRemoteFile(
       fileUrl    : record.fileUrl,
       storedHash : record.fileHash,

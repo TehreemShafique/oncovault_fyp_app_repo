@@ -207,7 +207,10 @@ service cloud.firestore {
       // Subcollection: Medical Records
       match /medicalRecords/{recordId} {
         allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
-        allow create, update: if isAuthenticated() && (isOwner(patientId) || isClinician());
+        allow create: if isAuthenticated() && (isOwner(patientId) || isClinician()) &&
+          !request.resource.data.keys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
+        allow update: if isAuthenticated() && (isOwner(patientId) || isClinician()) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
         allow delete: if isAuthenticated() && (isOwner(patientId) || isDoctor());
       }
     }
@@ -295,15 +298,9 @@ service cloud.firestore {
         resource.data.doctorId == request.auth.uid ||
         isClinician()
       );
-      // Strictly enforced: ONLY the patient can grant consent
-      allow create: if isAuthenticated() &&
-        request.resource.data.patientId == request.auth.uid;
-      // Either patient or doctor can update status (e.g. revoke)
-      allow update: if isAuthenticated() && (
-        resource.data.patientId == request.auth.uid ||
-        resource.data.doctorId == request.auth.uid
-      );
-      allow delete: if false;
+      // Direct client writes strictly disabled: all mutations must route through Trusted Fabric Gateway
+      // and are synchronized to Firestore exclusively via server-side Firebase Admin SDK.
+      allow write: if false;
     }
 
     // =========================================================================
@@ -326,12 +323,20 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         (isPatient() && request.resource.data.patientId == request.auth.uid) ||
         isClinician()
-      );
+      ) && !request.resource.data.keys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
       allow update: if isAuthenticated() && (
         (resource.data.patientId == request.auth.uid && request.resource.data.patientId == request.auth.uid) ||
         isClinician()
-      );
+      ) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
       allow delete: if isAuthenticated() && isDoctor();
+    }
+
+    // =========================================================================
+    // 10B. GATEWAY DURABLE OPERATIONS COLLECTION
+    // =========================================================================
+    match /gateway_operations/{operationId} {
+      // Internal backend reconciliation metadata: clients are strictly denied read and write access
+      allow read, write: if false;
     }
 
     // =========================================================================
