@@ -5,6 +5,7 @@ import * as admin from 'firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { toPktDate } from './utils/time_utils';
 import { verifyDoctorCareAuthorization } from './assign_nurse';
+import { processCriticalAlertEvent, FcmSender } from './dispatch_critical_alert';
 
 export interface RecordVitalObservationRequest {
   patientId: string;
@@ -121,7 +122,8 @@ function assessVitals(params: {
  */
 export const recordVitalObservationHandler = async (
   request: { auth?: { uid: string }; data: any },
-  firestoreInstance?: admin.firestore.Firestore
+  firestoreInstance?: admin.firestore.Firestore,
+  customFcmSender?: FcmSender
 ): Promise<RecordVitalObservationResponse> => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to record vitals.');
@@ -375,7 +377,56 @@ export const recordVitalObservationHandler = async (
         { merge: true }
       );
     }
+
+    // Step 1: Atomically persist durable pending alert event if observation is abnormal (critical or warning)
+    const isAbnormal = assessment.isCritical || (assessment.warnings && assessment.warnings.length > 0);
+    if (isAbnormal) {
+      const eventRef = db.collection('critical_alert_events').doc(`event_${observationId}`);
+      const alertSeverity: 'high' | 'medium' = assessment.isCritical ? 'high' : 'medium';
+      transaction.set(eventRef, {
+        eventId: `event_${observationId}`,
+        observationId,
+        patientId,
+        patientName: '',
+        hospitalId: userData?.hospitalId || 'Oncology Ward 3A',
+        eventType: 'vital_alert',
+        severity: alertSeverity,
+        status: 'PENDING',
+        createdAt: serverNow,
+        attempts: 0,
+        lastAttemptAt: null,
+        processingLease: null,
+        lastErrorCode: null,
+        completedAt: null,
+        criticalReasons: assessment.criticalReasons,
+        warningFlags: assessment.warnings,
+        vitalsSummary: {
+          bloodPressure: bpDisplay,
+          systolicBp,
+          diastolicBp,
+          pulseRate: Math.round(pulseRate),
+          temperatureC: tempC,
+          respiratoryRate: Math.round(respiratoryRate),
+          oxygenSaturation: Math.round(oxygenSaturation),
+        },
+        recordedByUid: callerUid,
+        recordedByName: clinicianName,
+        recordedByRole: userRole,
+      });
+    }
   });
+
+  // Step 2: Post-commit trusted alert worker dispatch (Outside transaction)
+  const isAbnormal = assessment.isCritical || (assessment.warnings && assessment.warnings.length > 0);
+  if (!isReplay && isAbnormal) {
+    try {
+      await processCriticalAlertEvent(db, `event_${observationId}`, customFcmSender);
+    } catch (dispatchErr) {
+      // Crash resilience: the durable event is already safely committed in critical_alert_events in status 'PENDING'.
+      // A background sweeper or recovery worker will process it. Never fail the vital observation write if dispatch throws.
+      console.error(`Alert dispatch deferred to recovery worker for observation ${observationId}:`, dispatchErr);
+    }
+  }
 
   return {
     success: true,

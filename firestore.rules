@@ -253,8 +253,13 @@ service cloud.firestore {
 
       // Subcollection: Doctor Critical Alerts
       match /alerts/{alertId} {
-        allow read, create, update, delete: if isAuthenticated() &&
-          isOwner(doctorId) && isDoctor();
+        allow read: if isAuthenticated() && (isOwner(doctorId) || hasRole('admin'));
+        // Direct client creation is blocked to prevent forgery; vital alerts originate from trusted backend
+        allow create: if false;
+        // Direct client mutation of clinical state is blocked; only isRead may be toggled locally
+        allow update: if isAuthenticated() && isOwner(doctorId) && isDoctor() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        allow delete: if false;
       }
 
       // Subcollection: Doctor Diagnoses Index
@@ -510,6 +515,47 @@ service cloud.firestore {
       allow update, delete: if isAuthenticated() &&
         isDoctor() &&
         resource.data.doctorId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 13. CRITICAL ALERT EVENTS (TRUSTED WORKER PIPELINE)
+    // =========================================================================
+    match /critical_alert_events/{eventId} {
+      // Direct client access is strictly denied; accessed exclusively via Firebase Admin SDK
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 14. SUPERVISOR ESCALATED ALERTS
+    // =========================================================================
+    match /escalated_alerts/{escalationId} {
+      // Direct client write/mutation is strictly blocked (Admin SDK pipeline only)
+      allow write: if false;
+
+      // Hospital-scoped authorization:
+      // 1. Hospital admin for the specific hospital
+      // 2. Doctor assigned to alert or with active granted Fabric consent in same hospital
+      // 3. Nurse actively assigned to patient in same hospital
+      // Cross-hospital access and unassigned clinicians are strictly blocked.
+      allow read: if isAuthenticated() && (
+        (hasRole('admin') && getUserData().hospitalId == resource.data.hospitalId) ||
+        (
+          isClinician() &&
+          getUserData().hospitalId == resource.data.hospitalId &&
+          (
+            hasActiveNurseAssignment(resource.data.patientId) ||
+            (
+              isDoctor() && (
+                resource.data.doctorId == request.auth.uid ||
+                (
+                  exists(/databases/$(database)/documents/doctor_patient_consents/$(resource.data.patientId + '_' + request.auth.uid)) &&
+                  get(/databases/$(database)/documents/doctor_patient_consents/$(resource.data.patientId + '_' + request.auth.uid)).data.status == 'granted'
+                )
+              )
+            )
+          )
+        )
+      );
     }
 
     // =========================================================================

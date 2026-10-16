@@ -1052,4 +1052,192 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
       );
     });
   });
+
+  describe('Phase 3B Critical Vital Alerts & Pipeline Security', () => {
+    const docId = 'doc_rule_test_3b';
+    const strangerDocId = 'doc_stranger_3b';
+    const patId = 'pat_rule_test_3b';
+    const alertId = 'alert_test_3b_001';
+    const eventId = 'event_test_3b_001';
+
+    beforeEach(async () => {
+      await seedDoc(`users/${docId}`, { uid: docId, role: 'doctor', hospitalId: 'Oncology Ward 3A' });
+      await seedDoc(`users/${strangerDocId}`, { uid: strangerDocId, role: 'doctor', hospitalId: 'Oncology Ward 3A' });
+      await seedDoc(`users/${patId}`, { uid: patId, role: 'patient', hospitalId: 'Oncology Ward 3A' });
+
+      // Seed authoritative alert in docId inbox
+      await seedDoc(`doctors/${docId}/alerts/${alertId}`, {
+        id: alertId,
+        alertId: alertId,
+        doctorId: docId,
+        patientId: patId,
+        alertType: 'vital_alert',
+        severity: 'high',
+        isRead: false,
+        isAcknowledged: false,
+        isResolved: false,
+        createdAt: new Date(),
+      });
+    });
+
+    test('Client direct write to critical_alert_events is strictly blocked', async () => {
+      const docContext = testEnv.authenticatedContext(docId);
+      const db = docContext.firestore();
+
+      await assertFails(
+        db.doc(`critical_alert_events/${eventId}`).set({
+          eventId,
+          patientId: patId,
+          status: 'PENDING',
+        })
+      );
+    });
+
+    test('Client direct creation of doctor critical alert is blocked (anti-forgery)', async () => {
+      const docContext = testEnv.authenticatedContext(docId);
+      const db = docContext.firestore();
+
+      await assertFails(
+        db.doc(`doctors/${docId}/alerts/forged_alert_001`).set({
+          id: 'forged_alert_001',
+          doctorId: docId,
+          patientId: patId,
+          alertType: 'vital_alert',
+          severity: 'high',
+          isAcknowledged: false,
+        })
+      );
+    });
+
+    test('Doctor can read their own critical alerts', async () => {
+      const docContext = testEnv.authenticatedContext(docId);
+      const db = docContext.firestore();
+
+      await assertSucceeds(db.doc(`doctors/${docId}/alerts/${alertId}`).get());
+    });
+
+    test('Foreign doctor cannot read another doctor critical alerts', async () => {
+      const strangerContext = testEnv.authenticatedContext(strangerDocId);
+      const db = strangerContext.firestore();
+
+      await assertFails(db.doc(`doctors/${docId}/alerts/${alertId}`).get());
+    });
+
+    test('Doctor can update isRead on their alert, but cannot mutate clinical or acknowledgment fields directly', async () => {
+      const docContext = testEnv.authenticatedContext(docId);
+      const db = docContext.firestore();
+
+      // Updating isRead alone succeeds
+      await assertSucceeds(db.doc(`doctors/${docId}/alerts/${alertId}`).update({ isRead: true }));
+
+      // Attempting to directly mutate isAcknowledged via client write is blocked
+      await assertFails(db.doc(`doctors/${docId}/alerts/${alertId}`).update({ isAcknowledged: true }));
+
+      // Attempting to directly mutate isResolved via client write is blocked
+      await assertFails(db.doc(`doctors/${docId}/alerts/${alertId}`).update({ isResolved: true }));
+    });
+
+    test('Direct deletion of critical alerts is strictly blocked (audit trail immutability)', async () => {
+      const docContext = testEnv.authenticatedContext(docId);
+      const db = docContext.firestore();
+
+      await assertFails(db.doc(`doctors/${docId}/alerts/${alertId}`).delete());
+    });
+  });
+
+  describe('Phase 3B.1 Escalated Alerts Security & Hospital Isolation', () => {
+    const hospA = 'Oncology Ward 3A';
+    const hospB = 'Hematology Ward 5B';
+
+    const adminA = 'admin_hosp_a';
+    const adminB = 'admin_hosp_b';
+    const docA_assigned = 'doc_a_assigned';
+    const docA_stranger = 'doc_a_stranger';
+    const nurseA_assigned = 'nurse_a_assigned';
+    const nurseA_unassigned = 'nurse_a_unassigned';
+    const patA = 'pat_hosp_a';
+    const escId = 'esc_security_test_001';
+
+    beforeEach(async () => {
+      // Seed users
+      await seedDoc(`users/${adminA}`, { uid: adminA, role: 'admin', hospitalId: hospA });
+      await seedDoc(`users/${adminB}`, { uid: adminB, role: 'admin', hospitalId: hospB });
+      await seedDoc(`users/${docA_assigned}`, { uid: docA_assigned, role: 'doctor', hospitalId: hospA });
+      await seedDoc(`users/${docA_stranger}`, { uid: docA_stranger, role: 'doctor', hospitalId: hospA });
+      await seedDoc(`users/${nurseA_assigned}`, { uid: nurseA_assigned, role: 'nurse', hospitalId: hospA });
+      await seedDoc(`users/${nurseA_unassigned}`, { uid: nurseA_unassigned, role: 'nurse', hospitalId: hospA });
+      await seedDoc(`users/${patA}`, { uid: patA, role: 'patient', hospitalId: hospA });
+
+      // Seed nurse assignment for nurseA_assigned to patA
+      await seedDoc(`nurse_patient_assignments/${nurseA_assigned}_${patA}`, {
+        nurseId: nurseA_assigned,
+        patientId: patA,
+        status: 'active',
+      });
+
+      // Seed granted Fabric consent for docA_assigned to patA
+      await seedDoc(`doctor_patient_consents/${patA}_${docA_assigned}`, {
+        patientId: patA,
+        doctorId: docA_assigned,
+        status: 'granted',
+      });
+
+      // Seed authoritative escalated alert for patA in hospA
+      await seedDoc(`escalated_alerts/${escId}`, {
+        id: escId,
+        observationId: 'obs_esc_001',
+        patientId: patA,
+        hospitalId: hospA,
+        doctorId: docA_assigned,
+        status: 'ACTIVE_ESCALATION',
+        reason: 'Severe Hypoxemia SpO2 86%',
+      });
+    });
+
+    test('Same-hospital administrator can read escalated alert', async () => {
+      const ctx = testEnv.authenticatedContext(adminA);
+      await assertSucceeds(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Foreign-hospital administrator is BLOCKED from reading escalated alert (hospital isolation)', async () => {
+      const ctx = testEnv.authenticatedContext(adminB);
+      await assertFails(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Actively assigned nurse in same hospital can read escalated alert', async () => {
+      const ctx = testEnv.authenticatedContext(nurseA_assigned);
+      await assertSucceeds(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Unassigned nurse in same hospital is BLOCKED from reading escalated alert', async () => {
+      const ctx = testEnv.authenticatedContext(nurseA_unassigned);
+      await assertFails(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Authorized doctor with granted consent in same hospital can read escalated alert', async () => {
+      const ctx = testEnv.authenticatedContext(docA_assigned);
+      await assertSucceeds(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Unrelated doctor in same hospital without consent is BLOCKED from reading escalated alert', async () => {
+      const ctx = testEnv.authenticatedContext(docA_stranger);
+      await assertFails(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Patient is strictly BLOCKED from reading escalated alerts', async () => {
+      const ctx = testEnv.authenticatedContext(patA);
+      await assertFails(ctx.firestore().doc(`escalated_alerts/${escId}`).get());
+    });
+
+    test('Direct client write to escalated_alerts is strictly BLOCKED', async () => {
+      const ctx = testEnv.authenticatedContext(adminA);
+      await assertFails(
+        ctx.firestore().doc(`escalated_alerts/client_forged_esc`).set({
+          id: 'client_forged_esc',
+          patientId: patA,
+          hospitalId: hospA,
+        })
+      );
+    });
+  });
 });

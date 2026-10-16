@@ -21,12 +21,29 @@ typedef UpdateDoctorAvailabilityCallable = Future<Map<String, dynamic>> Function
   bool? isAvailable,
 });
 
+typedef AcknowledgeAlertCallable = Future<Map<String, dynamic>> Function({
+  required String doctorId,
+  required String alertId,
+  String? notes,
+});
+
+typedef ResolveAlertCallable = Future<Map<String, dynamic>> Function({
+  required String doctorId,
+  required String alertId,
+  String? notes,
+});
+
+typedef WatchAlertsStream = Stream<List<CriticalAlert>> Function(String doctorId);
+
 class DoctorService {
   final FirebaseFirestore? _customDb;
   final FirebaseAuth? _customAuth;
   final FirebaseFunctions? _customFunctions;
   final ApproveAppointmentCallable? _customApproveCallable;
   final UpdateDoctorAvailabilityCallable? _customUpdateAvailabilityCallable;
+  final AcknowledgeAlertCallable? _customAcknowledgeCallable;
+  final ResolveAlertCallable? _customResolveCallable;
+  final WatchAlertsStream? _customWatchAlerts;
 
   DoctorService({
     FirebaseFirestore? firestore,
@@ -34,11 +51,17 @@ class DoctorService {
     FirebaseFunctions? functions,
     ApproveAppointmentCallable? approveCallable,
     UpdateDoctorAvailabilityCallable? updateAvailabilityCallable,
+    AcknowledgeAlertCallable? acknowledgeCallable,
+    ResolveAlertCallable? resolveCallable,
+    WatchAlertsStream? watchAlertsStream,
   })  : _customDb = firestore,
         _customAuth = auth,
         _customFunctions = functions,
         _customApproveCallable = approveCallable,
-        _customUpdateAvailabilityCallable = updateAvailabilityCallable;
+        _customUpdateAvailabilityCallable = updateAvailabilityCallable,
+        _customAcknowledgeCallable = acknowledgeCallable,
+        _customResolveCallable = resolveCallable,
+        _customWatchAlerts = watchAlertsStream;
 
   FirebaseFirestore get _db => _customDb ?? FirebaseFirestore.instance;
   FirebaseAuth? get _safeAuth {
@@ -1551,19 +1574,61 @@ class DoctorService {
     ).toMap());
   }
 
-  Stream<List<CriticalAlert>> watchAlerts(String doctorId) => _alerts(doctorId)
-      .where('isResolved', isEqualTo: false)
-      .orderBy('createdAt', descending: true)
-      .snapshots()
-      .map((s) => s.docs
-          .map((d) => CriticalAlert.fromMap(d.data() as Map<String, dynamic>))
-          .toList());
+  Stream<List<CriticalAlert>> watchAlerts(String doctorId) =>
+      _customWatchAlerts != null
+          ? _customWatchAlerts!(doctorId).asBroadcastStream()
+          : _alerts(doctorId)
+              .where('isResolved', isEqualTo: false)
+              .orderBy('createdAt', descending: true)
+              .snapshots()
+              .map((s) => s.docs
+                  .map((d) => CriticalAlert.fromMap(d.data() as Map<String, dynamic>))
+                  .toList());
 
-  Future<void> resolveAlert(String doctorId, String alertId) async {
-    await _alerts(doctorId).doc(alertId).update({
-      'isResolved': true,
-      'isRead': true,
-    });
+  /// Acknowledges a critical alert via trusted Cloud Function.
+  /// Records doctor UID and server timestamp, transitioning alert to ACKNOWLEDGED.
+  Future<void> acknowledgeAlert(String doctorId, String alertId, {String? notes}) async {
+    if (_customAcknowledgeCallable != null) {
+      await _customAcknowledgeCallable!(
+        doctorId: doctorId,
+        alertId: alertId,
+        notes: notes,
+      );
+      return;
+    }
+    try {
+      final callable = _functions.httpsCallable('acknowledgeCriticalAlert');
+      await callable.call<Map<String, dynamic>>({
+        'doctorId': doctorId,
+        'alertId': alertId,
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to acknowledge alert: ${e.code}');
+    }
+  }
+
+  /// Resolves an acknowledged critical alert via trusted Cloud Function.
+  /// Requires alert to be acknowledged first.
+  Future<void> resolveAlert(String doctorId, String alertId, {String? notes}) async {
+    if (_customResolveCallable != null) {
+      await _customResolveCallable!(
+        doctorId: doctorId,
+        alertId: alertId,
+        notes: notes,
+      );
+      return;
+    }
+    try {
+      final callable = _functions.httpsCallable('resolveCriticalAlert');
+      await callable.call<Map<String, dynamic>>({
+        'doctorId': doctorId,
+        'alertId': alertId,
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to resolve alert: ${e.code}');
+    }
   }
 
   Future<void> markAlertRead(String doctorId, String alertId) async {

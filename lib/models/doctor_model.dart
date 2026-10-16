@@ -218,12 +218,24 @@ class CriticalAlert {
   final String patientId;
   final String patientName;
   final String doctorId;
-  final String alertType;    // 'urgent_review' | 'lab_critical' | 'missed_appt' | 'vitals'
+  final String alertType;    // 'urgent_review' | 'lab_critical' | 'missed_appt' | 'vital_alert'
   final String severity;     // 'high' | 'medium' | 'low'
   final String title;
   final String description;
   final bool isRead;
+  final bool isAcknowledged;
+  final DateTime? acknowledgedAt;
+  final String? acknowledgedBy;
+  final String? acknowledgmentNotes;
   final bool isResolved;
+  final DateTime? resolvedAt;
+  final String? resolvedBy;
+  final String? resolutionNotes;
+  final String? eventId;
+  final String? observationId;
+  final String? dispatchStatus;
+  final String? escalationStatus;
+  final Map<String, dynamic>? vitalsSummary;
   final DateTime createdAt;
 
   CriticalAlert({
@@ -236,47 +248,120 @@ class CriticalAlert {
     required this.title,
     required this.description,
     this.isRead = false,
+    this.isAcknowledged = false,
+    this.acknowledgedAt,
+    this.acknowledgedBy,
+    this.acknowledgmentNotes,
     this.isResolved = false,
+    this.resolvedAt,
+    this.resolvedBy,
+    this.resolutionNotes,
+    this.eventId,
+    this.observationId,
+    this.dispatchStatus,
+    this.escalationStatus,
+    this.vitalsSummary,
     required this.createdAt,
   });
 
   Map<String, dynamic> toMap() => {
-    'id':          id,
-    'patientId':   patientId,
-    'patientName': patientName,
-    'doctorId':    doctorId,
-    'alertType':   alertType,
-    'severity':    severity,
-    'title':       title,
-    'description': description,
-    'isRead':      isRead,
-    'isResolved':  isResolved,
-    'createdAt':   Timestamp.fromDate(createdAt),
+    'id':                  id,
+    'alertId':             id,
+    'patientId':           patientId,
+    'patientName':         patientName,
+    'doctorId':            doctorId,
+    'alertType':           alertType,
+    'severity':            severity,
+    'title':               title,
+    'description':         description,
+    'isRead':              isRead,
+    'isAcknowledged':      isAcknowledged,
+    'acknowledgedAt':      acknowledgedAt != null ? Timestamp.fromDate(acknowledgedAt!) : null,
+    'acknowledgedBy':      acknowledgedBy,
+    'acknowledgmentNotes': acknowledgmentNotes,
+    'isResolved':          isResolved,
+    'resolvedAt':          resolvedAt != null ? Timestamp.fromDate(resolvedAt!) : null,
+    'resolvedBy':          resolvedBy,
+    'resolutionNotes':     resolutionNotes,
+    'eventId':             eventId,
+    'observationId':       observationId,
+    'dispatchStatus':      dispatchStatus,
+    'escalationStatus':    escalationStatus,
+    if (vitalsSummary != null) 'vitalsSummary': vitalsSummary,
+    'createdAt':           Timestamp.fromDate(createdAt),
   };
 
-  factory CriticalAlert.fromMap(Map<String, dynamic> m) => CriticalAlert(
-    id:          m['id'] ?? '',
-    patientId:   m['patientId'] ?? '',
-    patientName: m['patientName'] ?? '',
-    doctorId:    m['doctorId'] ?? '',
-    alertType:   m['alertType'] ?? '',
-    severity:    m['severity'] ?? 'medium',
-    title:       m['title'] ?? '',
-    description: m['description'] ?? '',
-    isRead:      m['isRead'] ?? false,
-    isResolved:  m['isResolved'] ?? false,
-    createdAt:   m['createdAt'] != null
-        ? (m['createdAt'] as Timestamp).toDate()
-        : DateTime.now(),
-  );
+  factory CriticalAlert.fromMap(Map<String, dynamic> m) {
+    DateTime? parseDate(dynamic val) {
+      if (val is Timestamp) return val.toDate();
+      if (val is String) return DateTime.tryParse(val);
+      if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+      return null;
+    }
 
-  CriticalAlert copyWith({bool? isRead, bool? isResolved}) => CriticalAlert(
-    id: id, patientId: patientId, patientName: patientName,
-    doctorId: doctorId, alertType: alertType, severity: severity,
-    title: title, description: description,
-    isRead: isRead ?? this.isRead,
-    isResolved: isResolved ?? this.isResolved,
-    createdAt: createdAt,
+    return CriticalAlert(
+      id:                  m['id'] ?? m['alertId'] ?? '',
+      patientId:           m['patientId'] ?? '',
+      patientName:         m['patientName'] ?? '',
+      doctorId:            m['doctorId'] ?? '',
+      alertType:           m['alertType'] ?? '',
+      severity:            m['severity'] ?? 'medium',
+      title:               m['title'] ?? '',
+      description:         m['description'] ?? '',
+      isRead:              m['isRead'] ?? false,
+      isAcknowledged:      m['isAcknowledged'] ?? false,
+      acknowledgedAt:      parseDate(m['acknowledgedAt']),
+      acknowledgedBy:      m['acknowledgedBy'],
+      acknowledgmentNotes: m['acknowledgmentNotes'],
+      isResolved:          m['isResolved'] ?? false,
+      resolvedAt:          parseDate(m['resolvedAt']),
+      resolvedBy:          m['resolvedBy'],
+      resolutionNotes:     m['resolutionNotes'],
+      eventId:             m['eventId'],
+      observationId:       m['observationId'],
+      dispatchStatus:      m['dispatchStatus'],
+      escalationStatus:    m['escalationStatus'],
+      vitalsSummary:       m['vitalsSummary'] is Map ? Map<String, dynamic>.from(m['vitalsSummary']) : null,
+      createdAt:           parseDate(m['createdAt']) ?? DateTime.now(),
+    );
+  }
+
+  CriticalAlert copyWith({
+    bool? isRead,
+    bool? isAcknowledged,
+    DateTime? acknowledgedAt,
+    String? acknowledgedBy,
+    String? acknowledgmentNotes,
+    bool? isResolved,
+    DateTime? resolvedAt,
+    String? resolvedBy,
+    String? resolutionNotes,
+    String? dispatchStatus,
+    String? escalationStatus,
+  }) => CriticalAlert(
+    id:                  id,
+    patientId:           patientId,
+    patientName:         patientName,
+    doctorId:            doctorId,
+    alertType:           alertType,
+    severity:            severity,
+    title:               title,
+    description:         description,
+    isRead:              isRead ?? this.isRead,
+    isAcknowledged:      isAcknowledged ?? this.isAcknowledged,
+    acknowledgedAt:      acknowledgedAt ?? this.acknowledgedAt,
+    acknowledgedBy:      acknowledgedBy ?? this.acknowledgedBy,
+    acknowledgmentNotes: acknowledgmentNotes ?? this.acknowledgmentNotes,
+    isResolved:          isResolved ?? this.isResolved,
+    resolvedAt:          resolvedAt ?? this.resolvedAt,
+    resolvedBy:          resolvedBy ?? this.resolvedBy,
+    resolutionNotes:     resolutionNotes ?? this.resolutionNotes,
+    eventId:             eventId,
+    observationId:       observationId,
+    dispatchStatus:      dispatchStatus ?? this.dispatchStatus,
+    escalationStatus:    escalationStatus ?? this.escalationStatus,
+    vitalsSummary:       vitalsSummary,
+    createdAt:           createdAt,
   );
 }
 
