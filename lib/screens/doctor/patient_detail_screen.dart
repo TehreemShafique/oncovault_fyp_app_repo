@@ -9,6 +9,8 @@ import '../../services/doctor_service.dart';
 import '../../services/nurse_service.dart';
 import '../../models/vital_sign_model.dart';
 import '../../models/clinical_note_model.dart';
+import '../../models/treatment_plan_model.dart';
+import '../../services/treatment_tracking_service.dart';
 import '../nurse/patient_vitals_history_screen.dart';
 import '../nurse/patient_notes_history_screen.dart';
 import 'doctor_widgets.dart';
@@ -16,10 +18,18 @@ import 'full_medical_history_screen.dart';
 import 'add_diagnosis_screen.dart';
 import 'prescription_screen.dart';
 import 'blood_cancer_ehr_screen.dart';
+import 'doctor_treatment_plan_screen.dart';
+import 'create_treatment_plan_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
   final String patientId, doctorId;
-  const PatientDetailScreen({super.key, required this.patientId, required this.doctorId});
+  final TreatmentTrackingService? treatmentService;
+  const PatientDetailScreen({
+    super.key,
+    required this.patientId,
+    required this.doctorId,
+    this.treatmentService,
+  });
   @override
   State<PatientDetailScreen> createState() => _PatientDetailScreenState();
 }
@@ -223,6 +233,21 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
               patientId: widget.patientId,
               patientName: p.name,
               doctorService: _service,
+            ),
+          ),
+        ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 14)),
+
+        // ── Doctor Treatment Plan & Progress Card (Phase 3D.4) ──────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _DoctorTreatmentPlanCard(
+              patientId: widget.patientId,
+              patientName: p.name,
+              doctorId: widget.doctorId,
+              treatmentService: widget.treatmentService,
             ),
           ),
         ),
@@ -894,6 +919,232 @@ class _DoctorClinicalNotesCardState extends State<_DoctorClinicalNotesCard> {
         label,
         style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: fg),
       ),
+    );
+  }
+}
+
+class _DoctorTreatmentPlanCard extends StatelessWidget {
+  final String patientId;
+  final String patientName;
+  final String doctorId;
+  final TreatmentTrackingService? treatmentService;
+
+  const _DoctorTreatmentPlanCard({
+    required this.patientId,
+    required this.patientName,
+    required this.doctorId,
+    this.treatmentService,
+  });
+
+  TreatmentTrackingService get _service =>
+      treatmentService ?? TreatmentTrackingService.instance;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<TreatmentPlanModel>>(
+      stream: _service.watchPatientTreatmentPlans(patientId),
+      builder: (context, snapshot) {
+        final plans = snapshot.data ?? [];
+        final activePlan = plans.where((p) => p.isActive).isNotEmpty
+            ? plans.firstWhere((p) => p.isActive)
+            : (plans.isNotEmpty ? plans.first : null);
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: OV.outlineVariant.withValues(alpha: 0.5)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: OV.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.assignment_turned_in_rounded,
+                          size: 18,
+                          color: OV.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Treatment Plan & Supervision',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: OV.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  TextButton(
+                    key: const Key('viewAllPlansButton'),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => DoctorTreatmentPlanScreen(
+                            patientId: patientId,
+                            patientName: patientName,
+                            doctorId: doctorId,
+                            service: _service,
+                          ),
+                        ),
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      'Manage (${plans.length})',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: OV.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              if (activePlan == null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: OV.surfaceContainer.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded, size: 18, color: OV.outline),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'No treatment plans established yet.',
+                          style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                        ),
+                      ),
+                      OutlinedButton(
+                        key: const Key('establishPlanButton'),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => CreateTreatmentPlanScreen(
+                                patientId: patientId,
+                                patientName: patientName,
+                                doctorId: doctorId,
+                                service: _service,
+                              ),
+                            ),
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          side: const BorderSide(color: OV.primary),
+                        ),
+                        child: Text(
+                          'Create Plan',
+                          style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w700, color: OV.primary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        activePlan.title,
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: OV.onSurface,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: activePlan.isActive
+                            ? OV.primaryContainer
+                            : activePlan.isCompleted
+                                ? OV.tertiaryContainer
+                                : Colors.amber.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        activePlan.status.toUpperCase(),
+                        style: GoogleFonts.inter(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: activePlan.isActive
+                              ? OV.primary
+                              : activePlan.isCompleted
+                                  ? OV.tertiary
+                                  : Colors.amber.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Bedside Tasks Completed: ${activePlan.completedTasks}/${activePlan.totalTasks}',
+                      style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant),
+                    ),
+                    Text(
+                      '${activePlan.overallProgressPercentage}%',
+                      style: GoogleFonts.manrope(fontSize: 11, fontWeight: FontWeight.w700, color: OV.primary),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: activePlan.totalTasks > 0
+                        ? (activePlan.completedTasks / activePlan.totalTasks).clamp(0.0, 1.0)
+                        : 0.0,
+                    minHeight: 6,
+                    backgroundColor: OV.surfaceContainer,
+                    valueColor: const AlwaysStoppedAnimation<Color>(OV.primary),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

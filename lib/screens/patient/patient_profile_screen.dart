@@ -167,7 +167,9 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
             iconBg: const Color(0xFFFFF3E0),
             iconColor: const Color(0xFF8B5000),
             label: 'ALLERGIES',
-            value: p.allergies.isNotEmpty ? p.allergies.join(', ') : 'None recorded',
+            value: (p.allergies != null && p.allergies!.isNotEmpty)
+                ? p.allergies!.join(', ')
+                : (p.hasNoKnownAllergies == true ? 'No known allergies' : 'Not recorded'),
           ),
         ]),
       )),
@@ -214,7 +216,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   void _showEditDialog(BuildContext context, PatientProfile p) {
     final phoneCtrl   = TextEditingController(text: p.phone);
     final addressCtrl = TextEditingController(text: p.address);
-    final allergyCtrl = TextEditingController(text: p.allergies.join(', '));
+    final allergyCtrl = TextEditingController(text: p.allergies?.join(', ') ?? '');
     String selectedGender   = p.gender;
     String selectedBlood    = p.bloodType;
     DateTime? selectedDOB   = p.dateOfBirth;

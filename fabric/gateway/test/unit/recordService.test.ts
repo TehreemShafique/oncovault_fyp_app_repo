@@ -76,6 +76,63 @@ describe('RecordService Unit Tests', () => {
       expect(hash1).to.equal(hash2);
       expect(hash1).to.have.lengthOf(64);
     });
+
+    it('should deterministically hash treatment task completions matching Cloud Functions schema', () => {
+      const task1 = {
+        taskId: 'task_001',
+        planId: 'plan_100',
+        patientId: 'pat_200',
+        completedByNurseId: 'nurse_300',
+        completedAtIso: '2026-10-17T14:30:00.000Z',
+        executionRemarks: 'Infused over 2 hours'
+      };
+      const task2 = {
+        executionRemarks: 'Infused over 2 hours',
+        completedAtIso: '2026-10-17T14:30:00.000Z',
+        performerUid: 'nurse_300',
+        patientId: 'pat_200',
+        planId: 'plan_100',
+        taskId: 'task_001'
+      };
+
+      const hash1 = recordService.computeCanonicalTaskHash(task1);
+      const hash2 = recordService.computeCanonicalTaskHash(task2);
+
+      expect(hash1).to.equal(hash2);
+      expect(hash1).to.match(/^[a-f0-9]{64}$/);
+    });
+
+    it('should deterministically hash treatment progress updates with Firestore Timestamp conversion', () => {
+      const mockTimestamp = {
+        toDate: () => new Date('2026-10-17T15:00:00.000Z')
+      };
+      const update1 = {
+        updateId: 'upd_001',
+        planId: 'plan_100',
+        patientId: 'pat_200',
+        authorUid: 'nurse_300',
+        timestamp: mockTimestamp,
+        clinicalSummary: 'Patient stable, blood count improving.',
+        patientTolerance: 'well_tolerated',
+        factualObservations: 'Vitals stable'
+      };
+      const update2 = {
+        factualObservations: 'Vitals stable',
+        patientTolerance: 'well_tolerated',
+        clinicalSummary: 'Patient stable, blood count improving.',
+        timestampIso: '2026-10-17T15:00:00.000Z',
+        authorId: 'nurse_300',
+        patientId: 'pat_200',
+        planId: 'plan_100',
+        updateId: 'upd_001'
+      };
+
+      const hash1 = recordService.computeCanonicalProgressHash(update1);
+      const hash2 = recordService.computeCanonicalProgressHash(update2);
+
+      expect(hash1).to.equal(hash2);
+      expect(hash1).to.match(/^[a-f0-9]{64}$/);
+    });
   });
 
   describe('Record Anchoring', () => {

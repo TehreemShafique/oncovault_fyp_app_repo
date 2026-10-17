@@ -16,7 +16,8 @@
     "test:endpoint": "node ./node_modules/jest/bin/jest.js --runInBand test/http_callable_endpoint.test.ts",
     "test:vitals": "node ./node_modules/jest/bin/jest.js --runInBand test/vitals_callables.test.ts",
     "test:alerts": "node ./node_modules/jest/bin/jest.js --runInBand test/critical_alerts.test.ts",
-    "test:notes": "node ./node_modules/jest/bin/jest.js --runInBand test/clinical_notes.test.ts"
+    "test:notes": "node ./node_modules/jest/bin/jest.js --runInBand test/clinical_notes.test.ts",
+    "test:treatment": "node ./node_modules/jest/bin/jest.js --runInBand test/treatment_plans.test.ts"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",

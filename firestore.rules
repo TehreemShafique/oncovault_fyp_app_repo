@@ -111,6 +111,15 @@ service cloud.firestore {
       );
     }
 
+    function canAccessTreatmentPlan(patientId) {
+      return isAuthenticated() && (
+        isOwner(patientId) ||
+        hasRole('admin') ||
+        hasActiveNurseAssignment(patientId) ||
+        canDoctorAccessPatientEhr(patientId)
+      );
+    }
+
     // =========================================================================
     // 1. MEDICAL ID DIRECTORY (Pre-auth lookup)
     // =========================================================================
@@ -275,6 +284,32 @@ service cloud.firestore {
         // - Hospital admin
         // - Actively assigned nurse
         allow read: if isAuthenticated() && canAccessPatientVitals(patientId);
+      }
+
+      // Subcollection: Treatment Plans (Phase 3D Treatment Progress Tracking)
+      match /treatment_plans/{planId} {
+        // Direct client writes strictly blocked — mutations must route through trusted Cloud Functions
+        allow write: if false;
+
+        // Reads permitted for:
+        // - Patient themselves
+        // - Attending doctor with care relationship / granted consent / matching hospital
+        // - Hospital admin
+        // - Actively assigned nurse
+        // Cross-hospital and unassigned clinicians are strictly blocked.
+        allow read: if canAccessTreatmentPlan(patientId);
+
+        // Subcollection: Treatment Tasks
+        match /tasks/{taskId} {
+          allow write: if false;
+          allow read: if canAccessTreatmentPlan(patientId);
+        }
+
+        // Subcollection: Treatment Progress Updates
+        match /progress_updates/{updateId} {
+          allow write: if false;
+          allow read: if canAccessTreatmentPlan(patientId);
+        }
       }
     }
 

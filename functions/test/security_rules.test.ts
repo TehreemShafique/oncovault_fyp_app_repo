@@ -12,6 +12,8 @@ import {
 const RULES_PATH = path.resolve(__dirname, '../../firestore.rules');
 const rulesContent = fs.readFileSync(RULES_PATH, 'utf8');
 
+jest.setTimeout(60000);
+
 describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
   let testEnv: RulesTestEnvironment;
 
@@ -1439,6 +1441,182 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
           createdAt: new Date().toISOString(),
         })
       );
+    });
+  });
+
+  // ── 14. TREATMENT PLANS SECURITY (PHASE 3D) ──
+  describe('Treatment Plans & Tasks Security (Phase 3D)', () => {
+    const pat1 = 'pat_tp_1';
+    const patStranger = 'pat_tp_stranger';
+    const nurseAssigned = 'nurse_tp_assigned';
+    const nurseUnassigned = 'nurse_tp_unassigned';
+    const doc1 = 'doc_tp_1';
+    const docOtherHosp = 'doc_tp_other';
+    const docConsented = 'doc_tp_consented';
+    const planId = 'plan_sec_1';
+    const taskId = 'task_sec_1';
+    const updateId = 'update_sec_1';
+
+    beforeEach(async () => {
+      await seedDoc(`users/${pat1}`, { uid: pat1, role: 'patient', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${patStranger}`, { uid: patStranger, role: 'patient', hospitalId: 'hospital-B' });
+      await seedDoc(`users/${nurseAssigned}`, { uid: nurseAssigned, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${nurseUnassigned}`, { uid: nurseUnassigned, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${doc1}`, { uid: doc1, role: 'doctor', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${docOtherHosp}`, { uid: docOtherHosp, role: 'doctor', hospitalId: 'hospital-B' });
+      await seedDoc(`users/${docConsented}`, { uid: docConsented, role: 'doctor', hospitalId: 'hospital-B' });
+
+      // Active assignment for nurseAssigned
+      await seedDoc(`nurse_patient_assignments/${nurseAssigned}_${pat1}`, {
+        id: `${nurseAssigned}_${pat1}`,
+        nurseId: nurseAssigned,
+        patientId: pat1,
+        status: 'active',
+      });
+
+      // Granted consent for docConsented
+      await seedDoc(`doctor_patient_consents/${pat1}_${docConsented}`, {
+        id: `${pat1}_${docConsented}`,
+        patientId: pat1,
+        doctorId: docConsented,
+        status: 'granted',
+      });
+
+      // Seed treatment plan, task, and progress update
+      await seedDoc(`patients/${pat1}/treatment_plans/${planId}`, {
+        planId,
+        patientId: pat1,
+        doctorId: doc1,
+        title: 'Induction Phase',
+        status: 'active',
+      });
+
+      await seedDoc(`patients/${pat1}/treatment_plans/${planId}/tasks/${taskId}`, {
+        taskId,
+        planId,
+        patientId: pat1,
+        title: 'Administer Hydration',
+        status: 'pending',
+      });
+
+      await seedDoc(`patients/${pat1}/treatment_plans/${planId}/progress_updates/${updateId}`, {
+        updateId,
+        planId,
+        patientId: pat1,
+        authorUid: nurseAssigned,
+        summary: 'Tolerating well',
+      });
+    });
+
+    test('Direct client writes (create/update/delete) to treatment_plans are BLOCKED for all roles', async () => {
+      await assertFails(
+        testEnv.authenticatedContext(nurseAssigned).firestore().doc(`patients/${pat1}/treatment_plans/forged_plan`).set({
+          planId: 'forged_plan',
+          patientId: pat1,
+        })
+      );
+      await assertFails(
+        testEnv.authenticatedContext(doc1).firestore().doc(`patients/${pat1}/treatment_plans/forged_plan`).set({
+          planId: 'forged_plan',
+          patientId: pat1,
+        })
+      );
+      await assertFails(
+        testEnv.authenticatedContext(pat1).firestore().doc(`patients/${pat1}/treatment_plans/forged_plan`).set({
+          planId: 'forged_plan',
+          patientId: pat1,
+        })
+      );
+    });
+
+    test('Direct client writes to tasks and progress_updates are strictly BLOCKED', async () => {
+      await assertFails(
+        testEnv.authenticatedContext(nurseAssigned).firestore().doc(`patients/${pat1}/treatment_plans/${planId}/tasks/forged_task`).set({
+          taskId: 'forged_task',
+        })
+      );
+      await assertFails(
+        testEnv.authenticatedContext(nurseAssigned).firestore().doc(`patients/${pat1}/treatment_plans/${planId}/progress_updates/forged_upd`).set({
+          updateId: 'forged_upd',
+        })
+      );
+    });
+
+    test('Patient can read their own treatment plan and tasks', async () => {
+      const ctx = testEnv.authenticatedContext(pat1);
+      const db = ctx.firestore();
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}`).get());
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}/tasks/${taskId}`).get());
+    });
+
+    test('Attending doctor in same hospital can read treatment plan and tasks', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      const db = ctx.firestore();
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}`).get());
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}/tasks/${taskId}`).get());
+    });
+
+    test('Actively assigned nurse can read treatment plan, tasks, and progress updates', async () => {
+      const ctx = testEnv.authenticatedContext(nurseAssigned);
+      const db = ctx.firestore();
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}`).get());
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}/tasks/${taskId}`).get());
+      await assertSucceeds(db.doc(`patients/${pat1}/treatment_plans/${planId}/progress_updates/${updateId}`).get());
+    });
+
+    test('Nurse with revoked assignment is strictly BLOCKED from reading treatment plan (FR-M3.5)', async () => {
+      // Seed a revoked assignment
+      const nurseRevoked = 'nurse_revoked_test';
+      await seedDoc(`users/${nurseRevoked}`, { uid: nurseRevoked, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`nurse_patient_assignments/${nurseRevoked}_${pat1}`, {
+        id: `${nurseRevoked}_${pat1}`,
+        nurseId: nurseRevoked,
+        patientId: pat1,
+        status: 'revoked',
+      });
+
+      const ctx = testEnv.authenticatedContext(nurseRevoked);
+      const db = ctx.firestore();
+      await assertFails(db.doc(`patients/${pat1}/treatment_plans/${planId}`).get());
+      await assertFails(db.doc(`patients/${pat1}/treatment_plans/${planId}/tasks/${taskId}`).get());
+    });
+
+    test('Nurse with revoked assignment is strictly BLOCKED from reading clinical notes', async () => {
+      const nurseRevoked = 'nurse_revoked_test_2';
+      await seedDoc(`users/${nurseRevoked}`, { uid: nurseRevoked, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`nurse_patient_assignments/${nurseRevoked}_${pat1}`, {
+        id: `${nurseRevoked}_${pat1}`,
+        nurseId: nurseRevoked,
+        patientId: pat1,
+        status: 'revoked',
+      });
+      await seedDoc(`patients/${pat1}/clinical_notes/note_1`, {
+        noteId: 'note_1',
+        patientId: pat1,
+        authorUid: doc1,
+      });
+
+      const ctx = testEnv.authenticatedContext(nurseRevoked);
+      const db = ctx.firestore();
+      await assertFails(db.doc(`patients/${pat1}/clinical_notes/note_1`).get());
+    });
+
+    test('Actively assigned nurse CAN read patient blood_cancer_ehrs and medicalRecords (FR3.5)', async () => {
+      await seedDoc(`patients/${pat1}/blood_cancer_ehrs/ehr_1`, {
+        ehrId: 'ehr_1',
+        patientId: pat1,
+        diagnosis: 'AML',
+      });
+      await seedDoc(`patients/${pat1}/medicalRecords/record_1`, {
+        recordId: 'record_1',
+        patientId: pat1,
+        recordType: 'lab_report',
+      });
+
+      const ctx = testEnv.authenticatedContext(nurseAssigned);
+      const db = ctx.firestore();
+      await assertSucceeds(db.doc(`patients/${pat1}/blood_cancer_ehrs/ehr_1`).get());
+      await assertSucceeds(db.doc(`patients/${pat1}/medicalRecords/record_1`).get());
     });
   });
 });

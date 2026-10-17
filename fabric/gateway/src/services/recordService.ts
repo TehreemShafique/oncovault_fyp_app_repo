@@ -87,6 +87,60 @@ export class RecordService {
   }
 
   /**
+   * Canonical serialization for treatment task completion, matching manage_treatment_plan.ts.
+   */
+  public computeCanonicalTaskHash(task: Record<string, any>): string {
+    const completedAtIso =
+      task.completedAtIso ||
+      (task.completedAt && typeof task.completedAt.toDate === 'function'
+        ? task.completedAt.toDate().toISOString()
+        : task.completedAt instanceof Date
+        ? task.completedAt.toISOString()
+        : typeof task.completedAt === 'string'
+        ? task.completedAt
+        : '');
+
+    const canonicalObject = {
+      completedAtIso,
+      executionRemarks: (task.executionRemarks || '').trim(),
+      patientId: task.patientId || '',
+      performerUid: task.completedByNurseId || task.performerUid || '',
+      planId: task.planId || '',
+      taskId: task.taskId || task.id || ''
+    };
+    const serialized = JSON.stringify(canonicalObject, Object.keys(canonicalObject).sort());
+    return this.computeSha256(Buffer.from(serialized, 'utf8'));
+  }
+
+  /**
+   * Canonical serialization for treatment progress updates, matching manage_treatment_plan.ts.
+   */
+  public computeCanonicalProgressHash(update: Record<string, any>): string {
+    const timestampIso =
+      update.timestampIso ||
+      (update.timestamp && typeof update.timestamp.toDate === 'function'
+        ? update.timestamp.toDate().toISOString()
+        : update.timestamp instanceof Date
+        ? update.timestamp.toISOString()
+        : typeof update.timestamp === 'string'
+        ? update.timestamp
+        : '');
+
+    const canonicalObject = {
+      authorUid: update.authorUid || update.authorId || '',
+      clinicalSummary: (update.clinicalSummary || '').trim(),
+      factualObservations: (update.factualObservations || '').trim(),
+      patientId: update.patientId || '',
+      patientTolerance: update.patientTolerance || '',
+      planId: update.planId || '',
+      timestampIso,
+      updateId: update.updateId || update.id || ''
+    };
+    const serialized = JSON.stringify(canonicalObject, Object.keys(canonicalObject).sort());
+    return this.computeSha256(Buffer.from(serialized, 'utf8'));
+  }
+
+  /**
    * Anchors a medical record hash on the Hyperledger Fabric ledger.
    */
   public async anchorRecord(

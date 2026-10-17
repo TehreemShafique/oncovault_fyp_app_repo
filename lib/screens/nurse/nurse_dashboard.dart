@@ -14,6 +14,7 @@ import 'record_vitals_screen.dart';
 import 'patient_vitals_history_screen.dart';
 import 'nurse_voice_note_screen.dart';
 import 'patient_notes_history_screen.dart';
+import 'patient_treatment_plan_screen.dart';
 
 class NurseDashboard extends StatefulWidget {
   final OVUser user;
@@ -667,6 +668,36 @@ class _ApprovedApptCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 40,
+            child: OutlinedButton.icon(
+              key: Key('treatmentPlanBtn_${a.patientId}'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PatientTreatmentPlanScreen(
+                      patientId: a.patientId,
+                      patientName: a.patientName,
+                      nurseName: nurseName,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.assignment_turned_in_outlined, size: 16, color: OV.tertiary),
+              label: Text(
+                'Treatment Plan & Tasks',
+                style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: OV.tertiary,
+                side: BorderSide(color: OV.tertiary.withOpacity(0.6)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           SizedBox(

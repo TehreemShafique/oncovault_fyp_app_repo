@@ -1,6 +1,12 @@
 // lib/models/patient_profile_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum PatientAllergyStatus {
+  confirmedKnown,
+  confirmedNone,
+  notRecorded,
+}
+
 class PatientProfile {
   final String uid;
   final String name;
@@ -11,7 +17,8 @@ class PatientProfile {
   final String gender;
   final DateTime? dateOfBirth;
   final String bloodType;
-  final List<String> allergies;
+  final List<String>? allergies;
+  final bool? hasNoKnownAllergies;
   final String profileImageUrl;
   final String activeDiagnosis;
   final String diagnosisPhase;
@@ -28,13 +35,74 @@ class PatientProfile {
     this.gender = '',
     this.dateOfBirth,
     this.bloodType = '',
-    this.allergies = const [],
+    this.allergies,
+    this.hasNoKnownAllergies,
     this.profileImageUrl = '',
     this.activeDiagnosis = '',
     this.diagnosisPhase = '',
     this.diagnosisStartDate,
     this.diagnosisDurationWeeks = 0,
   });
+
+  /// Evaluates clinical allergy status across three distinct states:
+  /// 1. confirmedKnown: Documented specific allergic reactions.
+  /// 2. confirmedNone: Explicitly confirmed no known allergies (NKDA flag or NKDA token).
+  /// 3. notRecorded: Unrecorded, missing, empty, or unverified data (NEVER assumed to be NKDA).
+  PatientAllergyStatus get allergyStatus {
+    if (hasNoKnownAllergies == true) {
+      return PatientAllergyStatus.confirmedNone;
+    }
+    if (allergies == null) {
+      return PatientAllergyStatus.notRecorded;
+    }
+    final cleaned = allergies!
+        .map((a) => a.trim())
+        .where((a) => a.isNotEmpty)
+        .toList();
+    if (cleaned.isEmpty) {
+      return PatientAllergyStatus.notRecorded;
+    }
+    const nkdaTokens = {
+      'nkda',
+      'no known allergies',
+      'no known drug allergies',
+      'none',
+      'nka',
+      'no allergies',
+      'nil'
+    };
+    final isExplicitNone = cleaned.every((a) => nkdaTokens.contains(a.toLowerCase()));
+    if (isExplicitNone) {
+      return PatientAllergyStatus.confirmedNone;
+    }
+    final realAllergens = cleaned
+        .where((a) => !nkdaTokens.contains(a.toLowerCase()))
+        .toList();
+    if (realAllergens.isNotEmpty) {
+      return PatientAllergyStatus.confirmedKnown;
+    }
+    return PatientAllergyStatus.notRecorded;
+  }
+
+  /// Returns only validated active allergens (excluding any NKDA tokens).
+  List<String> get confirmedAllergies {
+    if (allergyStatus != PatientAllergyStatus.confirmedKnown || allergies == null) {
+      return const [];
+    }
+    const nkdaTokens = {
+      'nkda',
+      'no known allergies',
+      'no known drug allergies',
+      'none',
+      'nka',
+      'no allergies',
+      'nil'
+    };
+    return allergies!
+        .map((a) => a.trim())
+        .where((a) => a.isNotEmpty && !nkdaTokens.contains(a.toLowerCase()))
+        .toList();
+  }
 
   int? get age {
     if (dateOfBirth == null) return null;
@@ -55,7 +123,8 @@ class PatientProfile {
     'gender':                 gender,
     'dateOfBirth':            dateOfBirth != null ? Timestamp.fromDate(dateOfBirth!) : null,
     'bloodType':              bloodType,
-    'allergies':              allergies,
+    if (allergies != null) 'allergies': allergies,
+    if (hasNoKnownAllergies != null) 'hasNoKnownAllergies': hasNoKnownAllergies,
     'profileImageUrl':        profileImageUrl,
     'activeDiagnosis':        activeDiagnosis,
     'diagnosisPhase':         diagnosisPhase,
@@ -73,7 +142,10 @@ class PatientProfile {
     gender:                 m['gender'] ?? '',
     dateOfBirth:            m['dateOfBirth'] != null ? (m['dateOfBirth'] as Timestamp).toDate() : null,
     bloodType:              m['bloodType'] ?? '',
-    allergies:              List<String>.from(m['allergies'] ?? []),
+    allergies:              m.containsKey('allergies') && m['allergies'] != null
+        ? List<String>.from(m['allergies'])
+        : null,
+    hasNoKnownAllergies:    m['hasNoKnownAllergies'] as bool? ?? (m['allergiesConfirmedNone'] as bool?),
     profileImageUrl:        m['profileImageUrl'] ?? '',
     activeDiagnosis:        m['activeDiagnosis'] ?? '',
     diagnosisPhase:         m['diagnosisPhase'] ?? '',
@@ -84,13 +156,16 @@ class PatientProfile {
   PatientProfile copyWith({
     String? name, String? phone, String? address, String? gender,
     DateTime? dateOfBirth, String? bloodType, List<String>? allergies,
+    bool? hasNoKnownAllergies,
     String? profileImageUrl, String? activeDiagnosis, String? diagnosisPhase,
     DateTime? diagnosisStartDate, int? diagnosisDurationWeeks,
   }) => PatientProfile(
     uid: uid, name: name ?? this.name, email: email, medicalId: medicalId,
     phone: phone ?? this.phone, address: address ?? this.address,
     gender: gender ?? this.gender, dateOfBirth: dateOfBirth ?? this.dateOfBirth,
-    bloodType: bloodType ?? this.bloodType, allergies: allergies ?? this.allergies,
+    bloodType: bloodType ?? this.bloodType,
+    allergies: allergies ?? this.allergies,
+    hasNoKnownAllergies: hasNoKnownAllergies ?? this.hasNoKnownAllergies,
     profileImageUrl: profileImageUrl ?? this.profileImageUrl,
     activeDiagnosis: activeDiagnosis ?? this.activeDiagnosis,
     diagnosisPhase: diagnosisPhase ?? this.diagnosisPhase,

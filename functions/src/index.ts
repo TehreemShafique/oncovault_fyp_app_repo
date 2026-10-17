@@ -22,3 +22,9 @@ export {
   submitClinicalNote,
   reviewClinicalNote,
 } from './record_clinical_note';
+export {
+  createTreatmentPlan,
+  completeTreatmentTask,
+  recordTreatmentProgressUpdate,
+  updateTreatmentPlanStatus,
+} from './manage_treatment_plan';
