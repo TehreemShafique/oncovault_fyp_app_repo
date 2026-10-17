@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import '../config/api_config.dart';
 import '../models/nlp_extraction_model.dart';
 
@@ -21,7 +22,21 @@ class NlpService {
 
   final http.Client _client = http.Client();
 
-  /// Health check for the clinical analysis engine
+  /// Acquires fresh Firebase ID token for authentication against Python NLP service
+  Future<String?> _getAuthHeader() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final token = await user.getIdToken();
+        if (token != null && token.isNotEmpty) {
+          return 'Bearer $token';
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Health check for the clinical analysis engine (unauthenticated monitoring endpoint)
   Future<bool> checkHealth() async {
     try {
       final uri = Uri.parse(ApiConfig.nlpHealthEndpoint);
@@ -33,7 +48,11 @@ class NlpService {
   }
 
   /// Sends clinical dictation text for concept extraction
-  Future<NlpExtractionResponse> extractClinicalInformation(String transcriptionText) async {
+  Future<NlpExtractionResponse> extractClinicalInformation(
+    String transcriptionText, {
+    String? patientId,
+    String? customAuthHeader,
+  }) async {
     final cleanText = transcriptionText.trim();
     if (cleanText.isEmpty) {
       throw const NlpServiceException('Please provide non-empty clinical text for analysis.');
@@ -45,12 +64,17 @@ class NlpService {
     }
 
     try {
+      final authHeader = customAuthHeader ?? await _getAuthHeader();
+      final headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (authHeader != null) 'Authorization': authHeader,
+        if (patientId != null) 'X-Patient-Id': patientId,
+      };
+
       final response = await _client.post(
         uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode({'text': cleanText}),
       ).timeout(
         const Duration(seconds: 15),
@@ -87,6 +111,8 @@ class NlpService {
     String? filePath,
     Uint8List? audioBytes,
     String? fileName,
+    String? patientId,
+    String? customAuthHeader,
   }) async {
     final uri = Uri.parse(ApiConfig.nlpTranscribeEndpoint);
     if (kDebugMode) {
@@ -94,7 +120,14 @@ class NlpService {
     }
 
     try {
+      final authHeader = customAuthHeader ?? await _getAuthHeader();
       final request = http.MultipartRequest('POST', uri);
+      if (authHeader != null) {
+        request.headers['Authorization'] = authHeader;
+      }
+      if (patientId != null) {
+        request.headers['X-Patient-Id'] = patientId;
+      }
 
       if (audioBytes != null && audioBytes.isNotEmpty) {
         request.files.add(

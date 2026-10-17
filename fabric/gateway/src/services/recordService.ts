@@ -58,6 +58,35 @@ export class RecordService {
   }
 
   /**
+   * Canonical serialization for clinical notes, matching record_clinical_note.ts.
+   */
+  public computeCanonicalClinicalNoteHash(note: Record<string, any>): string {
+    const canonicalObj = {
+      amendmentOf: note.amendmentOf || '',
+      amendmentReason: (note.amendmentReason || '').trim(),
+      authorUid: note.authorUid || note.authorId || '',
+      careInterventions: (note.careInterventions || '').trim(),
+      clinicalSummary: (note.clinicalSummary || note.clinicalText || '').trim(),
+      createdAtIso:
+        note.createdAtIso ||
+        (note.createdAt && typeof note.createdAt.toDate === 'function'
+          ? note.createdAt.toDate().toISOString()
+          : typeof note.createdAt === 'string'
+          ? note.createdAt
+          : ''),
+      narrativeObservations: (note.narrativeObservations || '').trim(),
+      noteId: note.noteId || note.id || '',
+      noteType: note.noteType || '',
+      nurseReviewedTranscript: (note.nurseReviewedTranscript || note.rawTranscript || '').trim(),
+      patientId: note.patientId || '',
+      supportedExtractedSymptoms: note.supportedExtractedSymptoms || {},
+      treatmentResponseNarrative: (note.treatmentResponseNarrative || '').trim()
+    };
+    const serialized = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
+    return this.computeSha256(Buffer.from(serialized, 'utf8'));
+  }
+
+  /**
    * Anchors a medical record hash on the Hyperledger Fabric ledger.
    */
   public async anchorRecord(
@@ -79,12 +108,18 @@ export class RecordService {
         throw new Error(`Medical record '${recordId}' not found.`);
       }
 
+      if (record.status === 'DRAFT') {
+        throw new Error(`Cannot anchor clinical record '${recordId}' because it is in DRAFT status.`);
+      }
+
       // 2. Authorize record access (strictly fail-closed)
       await this.assertRecordAccess(user, record.patientId);
 
       // 3. Obtain file bytes and calculate SHA-256 hash server-side
       let fileHash = '';
-      if (record.fileUrl && record.fileUrl.trim() !== '') {
+      if (record.isClinicalNote) {
+        fileHash = this.computeCanonicalClinicalNoteHash(record);
+      } else if (record.fileUrl && record.fileUrl.trim() !== '') {
         const fileBuffer = await this.firebaseAdmin.getFileBytes(record.fileUrl);
         fileHash = this.computeSha256(fileBuffer);
       } else {
@@ -126,7 +161,7 @@ export class RecordService {
 
       // 7. Sanitize metadata against strict chaincode allowlist
       const sanitizedMeta: Record<string, any> = {
-        documentType: (record.type || 'MEDICAL_RECORD').toUpperCase(),
+        documentType: record.isClinicalNote ? 'CLINICAL_NOTE' : (record.type || 'MEDICAL_RECORD').toUpperCase(),
         schemaVersion: '1.0'
       };
       if (providedMetadata && typeof providedMetadata === 'object') {
@@ -227,13 +262,19 @@ export class RecordService {
     const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(record.patientId, recordId);
     let targetHash = clientSpecifiedHash || record.fileHash || '';
 
-    // If no hash provided, compute from actual storage bytes
-    if (!targetHash && record.fileUrl) {
-      try {
-        const bytes = await this.firebaseAdmin.getFileBytes(record.fileUrl);
-        targetHash = this.computeSha256(bytes);
-      } catch {
-        targetHash = '';
+    // If no hash provided, compute from actual storage bytes or clinical note
+    if (!targetHash) {
+      if (record.isClinicalNote) {
+        targetHash = this.computeCanonicalClinicalNoteHash(record);
+      } else if (record.fileUrl) {
+        try {
+          const bytes = await this.firebaseAdmin.getFileBytes(record.fileUrl);
+          targetHash = this.computeSha256(bytes);
+        } catch {
+          targetHash = '';
+        }
+      } else {
+        targetHash = this.computeCanonicalMetadataHash(record);
       }
     }
 
@@ -345,7 +386,14 @@ export class RecordService {
       }
       return;
     }
-    if (user.role === 'doctor' || user.role === 'nurse') {
+    if (user.role === 'nurse') {
+      const isAssigned = await this.firebaseAdmin.checkActiveNurseAssignment(user.uid, patientId);
+      if (!isAssigned) {
+        throw new Error('Access Denied: Nurse does not hold active assignment for this patient.');
+      }
+      return;
+    }
+    if (user.role === 'doctor') {
       // 1. Evaluate Fabric ledger consent first (strictly fail-closed if revoked or inactive)
       try {
         const patientPseudoId = PseudonymService.generatePatientPseudoId(patientId);

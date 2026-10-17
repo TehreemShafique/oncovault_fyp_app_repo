@@ -55,6 +55,7 @@ describe('Live Hyperledger Fabric Network Integration Tests', () => {
     );
 
     expect(txId).to.exist;
+    expect(txId).to.match(/^[a-fA-F0-9]{64}$/);
     const proof = JSON.parse(result);
     expect(proof.recordId).to.equal(testRecordKey);
     expect(proof.sha256Hash).to.equal(testHash);
@@ -66,5 +67,16 @@ describe('Live Hyperledger Fabric Network Integration Tests', () => {
     const queriedProof = JSON.parse(queriedStr);
     expect(queriedProof.sha256Hash).to.equal(testHash);
     expect(queriedProof.txId).to.equal(proof.txId);
+
+    // VerifyRecordHash with exact hash succeeds (verified: true)
+    const verifySuccessStr = await fabric.evaluateTransaction('VerifyRecordHash', testRecordKey, testHash);
+    const verifySuccess = JSON.parse(verifySuccessStr);
+    expect(verifySuccess.verified).to.be.true;
+
+    // VerifyRecordHash with deliberately tampered/different hash fails (verified: false)
+    const tamperedHash = crypto.createHash('sha256').update('FORGED_TAMPERED_CONTENT').digest('hex');
+    const verifyFailStr = await fabric.evaluateTransaction('VerifyRecordHash', testRecordKey, tamperedHash);
+    const verifyFail = JSON.parse(verifyFailStr);
+    expect(verifyFail.verified).to.be.false;
   });
 });

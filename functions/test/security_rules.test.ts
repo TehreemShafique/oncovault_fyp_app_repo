@@ -1240,4 +1240,205 @@ describe('Phase 2D.2A Firestore Security Rules Test Suite', () => {
       );
     });
   });
+
+  // ── 15. PHASE 3C CLINICAL NOTES SECURITY RULES ──
+  describe('Phase 3C Clinical Notes Security Rules', () => {
+    const pat1 = 'pat_notes_1';
+    const patStranger = 'pat_notes_stranger';
+    const nurseAssigned = 'nurse_notes_assigned';
+    const nurseUnassigned = 'nurse_notes_unassigned';
+    const doc1 = 'doc_notes_1';
+    const noteId = 'note_sec_1';
+
+    beforeEach(async () => {
+      await seedDoc(`users/${pat1}`, { uid: pat1, role: 'patient', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${patStranger}`, { uid: patStranger, role: 'patient', hospitalId: 'hospital-B' });
+      await seedDoc(`users/${nurseAssigned}`, { uid: nurseAssigned, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${nurseUnassigned}`, { uid: nurseUnassigned, role: 'nurse', hospitalId: 'hospital-A' });
+      await seedDoc(`users/${doc1}`, { uid: doc1, role: 'doctor', hospitalId: 'hospital-A' });
+      await seedDoc(`users/doc_other_hosp`, { uid: 'doc_other_hosp', role: 'doctor', hospitalId: 'hospital-B' });
+      await seedDoc(`users/doc_consented`, { uid: 'doc_consented', role: 'doctor', hospitalId: 'hospital-B' });
+
+      // Active assignment for nurseAssigned
+      await seedDoc(`nurse_patient_assignments/${nurseAssigned}_${pat1}`, {
+        id: `${nurseAssigned}_${pat1}`,
+        nurseId: nurseAssigned,
+        patientId: pat1,
+        status: 'active',
+      });
+
+      // Granted consent for doc_consented
+      await seedDoc(`doctor_patient_consents/${pat1}_doc_consented`, {
+        id: `${pat1}_doc_consented`,
+        patientId: pat1,
+        doctorId: 'doc_consented',
+        status: 'granted',
+      });
+
+      // Seed clinical note
+      await seedDoc(`patients/${pat1}/clinical_notes/${noteId}`, {
+        noteId: noteId,
+        patientId: pat1,
+        authorUid: nurseAssigned,
+        status: 'submitted',
+        clinicalSummary: 'Test note',
+      });
+    });
+
+    test('Direct client write (create/update/delete) is strictly BLOCKED for nurse', async () => {
+      const ctx = testEnv.authenticatedContext(nurseAssigned);
+      await assertFails(
+        ctx.firestore().doc(`patients/${pat1}/clinical_notes/forged_note`).set({
+          noteId: 'forged_note',
+          patientId: pat1,
+        })
+      );
+    });
+
+    test('Direct client write is strictly BLOCKED for doctor', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      await assertFails(
+        ctx.firestore().doc(`patients/${pat1}/clinical_notes/forged_note`).set({
+          noteId: 'forged_note',
+          patientId: pat1,
+        })
+      );
+    });
+
+    test('Direct client write is strictly BLOCKED for patient', async () => {
+      const ctx = testEnv.authenticatedContext(pat1);
+      await assertFails(
+        ctx.firestore().doc(`patients/${pat1}/clinical_notes/forged_note`).set({
+          noteId: 'forged_note',
+          patientId: pat1,
+        })
+      );
+    });
+
+    test('Patient can read their own clinical note', async () => {
+      const ctx = testEnv.authenticatedContext(pat1);
+      await assertSucceeds(ctx.firestore().doc(`patients/${pat1}/clinical_notes/${noteId}`).get());
+    });
+
+    test('Attending doctor can read patient clinical note', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      await assertSucceeds(ctx.firestore().doc(`patients/${pat1}/clinical_notes/${noteId}`).get());
+    });
+
+    test('Actively assigned nurse can read patient clinical note', async () => {
+      const ctx = testEnv.authenticatedContext(nurseAssigned);
+      await assertSucceeds(ctx.firestore().doc(`patients/${pat1}/clinical_notes/${noteId}`).get());
+    });
+
+    test('Unassigned nurse is BLOCKED from reading patient clinical note', async () => {
+      const ctx = testEnv.authenticatedContext(nurseUnassigned);
+      await assertFails(ctx.firestore().doc(`patients/${pat1}/clinical_notes/${noteId}`).get());
+    });
+
+    test('Unrelated patient is BLOCKED from reading patient clinical note', async () => {
+      const ctx = testEnv.authenticatedContext(patStranger);
+      await assertFails(ctx.firestore().doc(`patients/${pat1}/clinical_notes/${noteId}`).get());
+    });
+
+    test('Nurse is BLOCKED from direct write to blood_cancer_ehrs (cannot bypass clinical notes callables)', async () => {
+      const ctx = testEnv.authenticatedContext(nurseAssigned);
+      await assertFails(
+        ctx.firestore().doc(`patients/${pat1}/blood_cancer_ehrs/bypass_ehr`).set({
+          diagnosis: 'AML',
+          clinicalNotes: 'Nurse direct write bypass attempt',
+        })
+      );
+    });
+
+    test('Doctor can create and update blood_cancer_ehrs within same hospital and matching patientId', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      const db = ctx.firestore();
+      const createdAt = new Date().toISOString();
+      await assertSucceeds(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_1`).set({
+          patientId: pat1,
+          diagnosisSubtype: 'AML M2',
+          stage: 'Induction',
+          createdAt: createdAt,
+        })
+      );
+
+      // Updating with same patientId and unchanged createdAt succeeds
+      await assertSucceeds(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_1`).update({
+          stage: 'Consolidation',
+        })
+      );
+    });
+
+    test('Doctor is BLOCKED from creating blood_cancer_ehrs without patientId or with mismatched patientId', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      const db = ctx.firestore();
+      // Missing patientId
+      await assertFails(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_bad1`).set({
+          diagnosisSubtype: 'AML M2',
+          stage: 'Induction',
+        })
+      );
+
+      // Mismatched patientId (cross-patient spoofing attempt)
+      await assertFails(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_bad2`).set({
+          patientId: patStranger,
+          diagnosisSubtype: 'AML M2',
+          stage: 'Induction',
+        })
+      );
+    });
+
+    test('Doctor is BLOCKED from mutating patientId or createdAt on existing blood_cancer_ehrs', async () => {
+      const ctx = testEnv.authenticatedContext(doc1);
+      const db = ctx.firestore();
+      const createdAt = '2026-10-17T10:00:00.000Z';
+      await assertSucceeds(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_immut`).set({
+          patientId: pat1,
+          diagnosisSubtype: 'ALL',
+          createdAt: createdAt,
+        })
+      );
+
+      // Attempt to tamper with patientId
+      await assertFails(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_immut`).update({
+          patientId: patStranger,
+        })
+      );
+
+      // Attempt to tamper with createdAt
+      await assertFails(
+        db.doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_immut`).update({
+          createdAt: '2026-01-01T00:00:00.000Z',
+        })
+      );
+    });
+
+    test('Doctor from another hospital is BLOCKED from creating blood_cancer_ehrs without consent', async () => {
+      const ctx = testEnv.authenticatedContext('doc_other_hosp');
+      await assertFails(
+        ctx.firestore().doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_x_hosp`).set({
+          patientId: pat1,
+          diagnosisSubtype: 'CML',
+          createdAt: new Date().toISOString(),
+        })
+      );
+    });
+
+    test('Doctor from another hospital can create blood_cancer_ehrs when granted consent exists', async () => {
+      const ctx = testEnv.authenticatedContext('doc_consented');
+      await assertSucceeds(
+        ctx.firestore().doc(`patients/${pat1}/blood_cancer_ehrs/doc_ehr_x_hosp_granted`).set({
+          patientId: pat1,
+          diagnosisSubtype: 'CML Accelerated',
+          createdAt: new Date().toISOString(),
+        })
+      );
+    });
+  });
 });

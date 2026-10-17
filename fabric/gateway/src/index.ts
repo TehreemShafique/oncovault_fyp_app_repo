@@ -2,6 +2,7 @@
 import { app } from './app';
 import { config } from './config/env';
 import { FabricGatewayService } from './services/fabricGateway';
+import { ReconciliationWorker } from './services/reconciliationWorker';
 
 async function bootstrap(): Promise<void> {
   const { host, port } = config;
@@ -16,6 +17,7 @@ async function bootstrap(): Promise<void> {
     const fabric = FabricGatewayService.getInstance();
     await fabric.connect();
     console.info(`[+] Connected to Hyperledger Fabric: Channel '${config.fabric.channelName}', Chaincode '${config.fabric.chaincodeName}' via '${config.fabric.peerEndpoint}'`);
+    ReconciliationWorker.getInstance().startPeriodicSweeper(15000);
   } catch (err: any) {
     console.warn(`[!] Initial Fabric Gateway connection deferred: ${err.message}`);
   }
@@ -30,6 +32,7 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     console.info(`\nReceived ${signal}. Shutting down gracefully...`);
+    ReconciliationWorker.getInstance().stopPeriodicSweeper();
     server.close(async () => {
       try {
         await FabricGatewayService.getInstance().disconnect();

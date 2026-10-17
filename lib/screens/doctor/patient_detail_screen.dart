@@ -8,7 +8,9 @@ import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
 import '../../services/nurse_service.dart';
 import '../../models/vital_sign_model.dart';
+import '../../models/clinical_note_model.dart';
 import '../nurse/patient_vitals_history_screen.dart';
+import '../nurse/patient_notes_history_screen.dart';
 import 'doctor_widgets.dart';
 import 'full_medical_history_screen.dart';
 import 'add_diagnosis_screen.dart';
@@ -207,6 +209,20 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
               patientId: widget.patientId,
               patientName: p.name,
               nurseService: _nurseService,
+            ),
+          ),
+        ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 14)),
+
+        // ── Nursing Clinical Notes Summary Card ────────────────────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _DoctorClinicalNotesCard(
+              patientId: widget.patientId,
+              patientName: p.name,
+              doctorService: _service,
             ),
           ),
         ),
@@ -554,6 +570,329 @@ class _DoctorVitalsCard extends StatelessWidget {
           if (unit.isNotEmpty)
             Text(unit, style: GoogleFonts.inter(fontSize: 9, color: OV.onSurfaceVariant)),
         ],
+      ),
+    );
+  }
+}
+
+class _DoctorClinicalNotesCard extends StatefulWidget {
+  final String patientId;
+  final String patientName;
+  final DoctorService doctorService;
+
+  const _DoctorClinicalNotesCard({
+    required this.patientId,
+    required this.patientName,
+    required this.doctorService,
+  });
+
+  @override
+  State<_DoctorClinicalNotesCard> createState() => _DoctorClinicalNotesCardState();
+}
+
+class _DoctorClinicalNotesCardState extends State<_DoctorClinicalNotesCard> {
+  bool _isSigning = false;
+
+  Future<void> _showSignOffDialog(ClinicalNoteModel note) async {
+    final notesCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Doctor Sign-Off',
+          style: GoogleFonts.manrope(fontSize: 17, fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Sign off on clinical documentation by ${note.authorName} (${note.authorRole.toUpperCase()}) submitted for this patient.',
+              style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: notesCtrl,
+              maxLines: 3,
+              style: GoogleFonts.inter(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Attending physician notes / sign-off remarks (optional)',
+                hintStyle: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: OV.outlineVariant),
+                ),
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: OV.onSurfaceVariant),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade700,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text(
+              'Sign Off',
+              style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      setState(() => _isSigning = true);
+      try {
+        await widget.doctorService.reviewClinicalNote(
+          patientId: widget.patientId,
+          noteId: note.noteId,
+          reviewNotes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Clinical note signed off successfully.',
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w600),
+              ),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to sign off: $e'),
+              backgroundColor: OV.error,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSigning = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<ClinicalNoteModel>>(
+      stream: widget.doctorService.watchPatientClinicalNotes(widget.patientId),
+      builder: (context, snapshot) {
+        final notes = snapshot.data ?? [];
+        final submittedNotes = notes.where((n) => n.status == ClinicalNoteStatus.submitted).toList();
+        final latestNote = notes.isNotEmpty ? notes.first : null;
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: submittedNotes.isNotEmpty
+                  ? OV.primary.withOpacity(0.5)
+                  : OV.outlineVariant.withOpacity(0.5),
+              width: submittedNotes.isNotEmpty ? 1.5 : 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: OV.secondary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.description_rounded, color: OV.secondary, size: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Nursing Clinical Notes',
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: OV.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PatientNotesHistoryScreen(
+                            patientId: widget.patientId,
+                            patientName: widget.patientName,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text(
+                      'All Notes (${notes.length}) →',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: OV.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              if (notes.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'No nursing clinical notes recorded yet.',
+                    style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                  ),
+                )
+              else ...[
+                if (submittedNotes.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: OV.primaryContainer.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: OV.primary.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.pending_actions, size: 16, color: OV.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${submittedNotes.length} note(s) awaiting attending review & sign-off.',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: OV.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+
+                if (latestNote != null) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'By ${latestNote.authorName} (${latestNote.authorRole}) • ${latestNote.createdAt != null ? DateFormat('MMM d, h:mm a').format(latestNote.createdAt!) : "Recently"}',
+                        style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant),
+                      ),
+                      _buildMiniBadge(latestNote.status),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  if (latestNote.clinicalSummary.isNotEmpty)
+                    Text(
+                      latestNote.clinicalSummary,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(fontSize: 13, color: OV.onSurface, height: 1.3),
+                    ),
+                  const SizedBox(height: 10),
+
+                  if (latestNote.status == ClinicalNoteStatus.submitted)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: ElevatedButton.icon(
+                        onPressed: _isSigning ? null : () => _showSignOffDialog(latestNote),
+                        icon: _isSigning
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check_circle_outline, size: 15),
+                        label: Text(
+                          _isSigning ? 'Signing Off...' : 'Review & Sign Off',
+                          style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w700),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                ],
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMiniBadge(ClinicalNoteStatus status) {
+    Color bg;
+    Color fg;
+    String label;
+
+    switch (status) {
+      case ClinicalNoteStatus.draft:
+        bg = Colors.amber.shade100;
+        fg = Colors.amber.shade900;
+        label = 'DRAFT';
+        break;
+      case ClinicalNoteStatus.submitted:
+        bg = Colors.blue.shade100;
+        fg = Colors.blue.shade900;
+        label = 'SUBMITTED';
+        break;
+      case ClinicalNoteStatus.reviewed:
+        bg = Colors.green.shade100;
+        fg = Colors.green.shade900;
+        label = 'REVIEWED';
+        break;
+      case ClinicalNoteStatus.amended:
+        bg = Colors.purple.shade100;
+        fg = Colors.purple.shade900;
+        label = 'AMENDED';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800, color: fg),
       ),
     );
   }

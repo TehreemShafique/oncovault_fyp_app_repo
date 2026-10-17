@@ -1,7 +1,7 @@
 import os
 import tempfile
 import logging
-from fastapi import FastAPI, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import sys
@@ -15,6 +15,7 @@ for p in [_nlp_dir, _root_dir]:
 from models.request_response import ExtractRequest, ExtractResponse
 from nlp.pipeline import ClinicalNlpPipeline
 from transcription.whisper_service import WhisperService
+from auth import verify_clinical_auth
 
 try:
     from oncovault_ai.api.diagnostic_router import router as diagnostic_router
@@ -58,6 +59,8 @@ def detect_audio_extension(content: bytes, fallback_ext: str = ".webm") -> str:
         return ".m4a"
     return fallback_ext
 
+MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB maximum recording limit
+
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health_check():
     return {
@@ -68,7 +71,10 @@ def health_check():
     }
 
 @app.post("/transcribe", status_code=status.HTTP_200_OK)
-async def transcribe_audio(audio: UploadFile = File(...)):
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    auth_user: dict = Depends(verify_clinical_auth)
+):
     if not audio.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -89,6 +95,12 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             detail="Uploaded audio file is empty or too short."
         )
 
+    if len(content) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file exceeds maximum permitted limit (25 MB)."
+        )
+
     actual_ext = detect_audio_extension(content, fallback_ext=client_ext or ".webm")
 
     # Save audio stream to temporary file safely with correct extension
@@ -101,11 +113,13 @@ async def transcribe_audio(audio: UploadFile = File(...)):
 
         whisper_service = WhisperService.get_instance()
         result = whisper_service.transcribe(temp_path, language="en")
+        # Explicitly flag that all automated transcriptions mandate clinician human review
+        result["requires_human_review"] = True
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Transcription error: {e}")
+        logger.error(f"Speech transcription failed: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Speech transcription failed: {str(e)}"
@@ -119,7 +133,10 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                 pass
 
 @app.post("/extract", response_model=ExtractResponse, status_code=status.HTTP_200_OK)
-def extract_clinical_concepts(req: ExtractRequest):
+def extract_clinical_concepts(
+    req: ExtractRequest,
+    auth_user: dict = Depends(verify_clinical_auth)
+):
     if not req.text or not req.text.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -129,6 +146,7 @@ def extract_clinical_concepts(req: ExtractRequest):
         response = pipeline.process(req.text)
         return response
     except Exception as e:
+        logger.error(f"Clinical NLP processing error: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Clinical NLP processing error: {str(e)}"

@@ -6,7 +6,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/vital_sign_model.dart';
 import '../models/nurse_assignment_model.dart';
+import '../models/clinical_note_model.dart';
 import '../utils/vital_validator.dart';
+import 'fabric_gateway_service.dart';
 
 /// Exception thrown when a nurse is not actively authorized or assigned to a patient.
 class NurseAuthorizationException implements Exception {
@@ -36,22 +38,33 @@ class NurseService {
   final FirebaseFirestore? _customDb;
   final FirebaseFunctions? _customFunctions;
   final FirebaseAuth? _customAuth;
+  final FabricGatewayService? _customFabricGateway;
 
   // Optional dependency injection hooks for unit/mock testing
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? _customRecordCallable;
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? _customAssignCallable;
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? _customSaveNoteDraftCallable;
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? _customSubmitNoteCallable;
 
   NurseService({
     FirebaseFirestore? firestore,
     FirebaseFunctions? functions,
     FirebaseAuth? auth,
+    FabricGatewayService? fabricGateway,
     Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? customRecordCallable,
     Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? customAssignCallable,
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? customSaveNoteDraftCallable,
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> data)? customSubmitNoteCallable,
   })  : _customDb = firestore,
         _customFunctions = functions,
         _customAuth = auth,
+        _customFabricGateway = fabricGateway,
         _customRecordCallable = customRecordCallable,
-        _customAssignCallable = customAssignCallable;
+        _customAssignCallable = customAssignCallable,
+        _customSaveNoteDraftCallable = customSaveNoteDraftCallable,
+        _customSubmitNoteCallable = customSubmitNoteCallable;
+
+  FabricGatewayService get _fabricGateway => _customFabricGateway ?? FabricGatewayService.instance;
 
   FirebaseFirestore get _db => _customDb ?? FirebaseFirestore.instance;
   FirebaseFunctions get _functions => _customFunctions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
@@ -484,5 +497,71 @@ class NurseService {
         .collection('reports_uploaded')
         .snapshots()
         .map((snap) => snap.docs.length);
+  }
+
+  // ─── Clinical Notes (Phase 3C) ────────────────────────────────
+
+  CollectionReference _clinicalNotes(String patientId) =>
+      _db.collection('patients').doc(patientId).collection('clinical_notes');
+
+  /// Saves a draft of a clinical note via trusted Cloud Function.
+  /// Unconfirmed drafts are editable by the authoring nurse.
+  Future<Map<String, dynamic>> saveClinicalNoteDraft(Map<String, dynamic> noteData) async {
+    if (_customSaveNoteDraftCallable != null) {
+      return await _customSaveNoteDraftCallable!(noteData);
+    }
+    final callable = _functions.httpsCallable('saveClinicalNoteDraft');
+    final result = await callable.call<Map<String, dynamic>>(noteData);
+    return Map<String, dynamic>.from(result.data);
+  }
+
+  /// Submits a finalized clinical note via trusted Cloud Function.
+  /// Computes canonical SHA-256 hash, transitions status to SUBMITTED,
+  /// links amendments atomically if specified, and makes record immutable.
+  /// Blockchain verification is managed asynchronously by the background reconciliation worker.
+  Future<Map<String, dynamic>> submitClinicalNote(Map<String, dynamic> noteData) async {
+    Map<String, dynamic> responseData;
+    if (_customSubmitNoteCallable != null) {
+      responseData = await _customSubmitNoteCallable!(noteData);
+    } else {
+      final callable = _functions.httpsCallable('submitClinicalNote');
+      final result = await callable.call<Map<String, dynamic>>(noteData);
+      responseData = Map<String, dynamic>.from(result.data);
+    }
+
+    return responseData;
+  }
+
+  /// Retries anchoring a submitted clinical note to Hyperledger Fabric.
+  Future<FabricProofInfo> anchorClinicalNoteOnFabric({
+    required String noteId,
+    required String patientId,
+    String noteType = 'progress_note',
+  }) async {
+    return await _fabricGateway.anchorRecord(
+      recordId: noteId,
+      patientId: patientId,
+      metadata: {
+        'documentType': 'CLINICAL_NOTE',
+        'noteType': noteType,
+      },
+    );
+  }
+
+  /// Real-time stream of all clinical notes for [patientId], ordered newest first.
+  Stream<List<ClinicalNoteModel>> watchPatientClinicalNotes(String patientId) {
+    return _clinicalNotes(patientId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => ClinicalNoteModel.fromMap(d.data() as Map<String, dynamic>, docId: d.id))
+            .toList());
+  }
+
+  /// Fetches a single clinical note by [patientId] and [noteId].
+  Future<ClinicalNoteModel?> fetchClinicalNote(String patientId, String noteId) async {
+    final doc = await _clinicalNotes(patientId).doc(noteId).get();
+    if (!doc.exists || doc.data() == null) return null;
+    return ClinicalNoteModel.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
   }
 }

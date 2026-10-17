@@ -1,4 +1,4 @@
-﻿import io
+import io
 import wave
 import struct
 import math
@@ -32,14 +32,16 @@ def test_transcribe_empty_file():
     empty_bytes = b"tiny"
     response = client.post(
         "/transcribe",
-        files={"audio": ("empty.wav", empty_bytes, "audio/wav")}
+        files={"audio": ("empty.wav", empty_bytes, "audio/wav")},
+        headers={"Authorization": "Bearer test_doctor_token"},
     )
     assert response.status_code == 400
 
 def test_transcribe_invalid_format():
     response = client.post(
         "/transcribe",
-        files={"audio": ("document.pdf", b"fake pdf content header that is longer than 100 bytes" * 5, "application/pdf")}
+        files={"audio": ("document.pdf", b"fake pdf content header that is longer than 100 bytes" * 5, "application/pdf")},
+        headers={"Authorization": "Bearer test_doctor_token"},
     )
     assert response.status_code == 400
     assert "Unsupported audio format" in response.json()["detail"]
@@ -48,7 +50,8 @@ def test_transcribe_synthetic_audio():
     wav_bytes = create_synthetic_wav(duration_s=1.5, freq_hz=300.0)
     response = client.post(
         "/transcribe",
-        files={"audio": ("sample_clip.wav", wav_bytes, "audio/wav")}
+        files={"audio": ("sample_clip.wav", wav_bytes, "audio/wav")},
+        headers={"Authorization": "Bearer test_doctor_token"},
     )
     assert response.status_code == 200
     data = response.json()

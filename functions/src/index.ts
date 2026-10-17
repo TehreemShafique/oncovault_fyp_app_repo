@@ -17,3 +17,8 @@ export {
   dispatchCriticalAlertOnCreate,
   recoverCriticalAlertEventsOnSchedule,
 } from './dispatch_critical_alert';
+export {
+  saveClinicalNoteDraft,
+  submitClinicalNote,
+  reviewClinicalNote,
+} from './record_clinical_note';

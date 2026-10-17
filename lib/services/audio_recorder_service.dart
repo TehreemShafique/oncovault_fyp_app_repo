@@ -1,5 +1,6 @@
-﻿// lib/services/audio_recorder_service.dart
+// lib/services/audio_recorder_service.dart
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -128,6 +129,19 @@ class AudioRecorderService {
         await _recorder.cancel();
       } catch (_) {}
       _isRecording = false;
+    }
+  }
+
+  /// Safely deletes a local temporary audio recording file to guarantee PHI cleanup.
+  Future<void> deleteAudioFile(String? filePath) async {
+    if (filePath == null || filePath.isEmpty || kIsWeb) return;
+    try {
+      final file = File(filePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      if (kDebugMode) print("Failed to delete temporary audio file: $e");
     }
   }
 

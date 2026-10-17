@@ -8,6 +8,7 @@ import '../models/patient_profile_model.dart';
 import '../models/medical_record_model.dart';
 import '../models/blood_cancer_ehr_model.dart';
 import '../models/doctor_availability_model.dart';
+import '../models/clinical_note_model.dart';
 import 'appointment_exceptions.dart';
 import 'appointment_service.dart';
 import 'fabric_gateway_service.dart';
@@ -33,6 +34,12 @@ typedef ResolveAlertCallable = Future<Map<String, dynamic>> Function({
   String? notes,
 });
 
+typedef ReviewClinicalNoteCallable = Future<Map<String, dynamic>> Function({
+  required String patientId,
+  required String noteId,
+  String? reviewNotes,
+});
+
 typedef WatchAlertsStream = Stream<List<CriticalAlert>> Function(String doctorId);
 
 class DoctorService {
@@ -43,6 +50,7 @@ class DoctorService {
   final UpdateDoctorAvailabilityCallable? _customUpdateAvailabilityCallable;
   final AcknowledgeAlertCallable? _customAcknowledgeCallable;
   final ResolveAlertCallable? _customResolveCallable;
+  final ReviewClinicalNoteCallable? _customReviewNoteCallable;
   final WatchAlertsStream? _customWatchAlerts;
 
   DoctorService({
@@ -53,6 +61,7 @@ class DoctorService {
     UpdateDoctorAvailabilityCallable? updateAvailabilityCallable,
     AcknowledgeAlertCallable? acknowledgeCallable,
     ResolveAlertCallable? resolveCallable,
+    ReviewClinicalNoteCallable? reviewClinicalNoteCallable,
     WatchAlertsStream? watchAlertsStream,
   })  : _customDb = firestore,
         _customAuth = auth,
@@ -61,6 +70,7 @@ class DoctorService {
         _customUpdateAvailabilityCallable = updateAvailabilityCallable,
         _customAcknowledgeCallable = acknowledgeCallable,
         _customResolveCallable = resolveCallable,
+        _customReviewNoteCallable = reviewClinicalNoteCallable,
         _customWatchAlerts = watchAlertsStream;
 
   FirebaseFirestore get _db => _customDb ?? FirebaseFirestore.instance;
@@ -1834,6 +1844,50 @@ class DoctorService {
           list.sort((a, b) => a.appointmentDate.compareTo(b.appointmentDate));
           return list;
         });
+  }
+
+  // ── Clinical Notes Review (Phase 3C) ──────────────────────────
+
+  /// Stream of all clinical notes for [patientId], ordered newest first.
+  Stream<List<ClinicalNoteModel>> watchPatientClinicalNotes(String patientId) {
+    return _db
+        .collection('patients')
+        .doc(patientId)
+        .collection('clinical_notes')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs
+            .map((d) => ClinicalNoteModel.fromMap(
+                d.data(),
+                docId: d.id))
+            .toList());
+  }
+
+  /// Reviews and signs off on a submitted clinical note via trusted Cloud Function.
+  /// Records doctor UID, timestamp, and optional sign-off remarks without mutating clinical observations.
+  Future<Map<String, dynamic>> reviewClinicalNote({
+    required String patientId,
+    required String noteId,
+    String? reviewNotes,
+  }) async {
+    if (_customReviewNoteCallable != null) {
+      return await _customReviewNoteCallable!(
+        patientId: patientId,
+        noteId: noteId,
+        reviewNotes: reviewNotes,
+      );
+    }
+    try {
+      final callable = _functions.httpsCallable('reviewClinicalNote');
+      final result = await callable.call<Map<String, dynamic>>({
+        'patientId': patientId,
+        'noteId': noteId,
+        if (reviewNotes != null && reviewNotes.isNotEmpty) 'reviewNotes': reviewNotes,
+      });
+      return Map<String, dynamic>.from(result.data);
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to review clinical note: ${e.code}');
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────

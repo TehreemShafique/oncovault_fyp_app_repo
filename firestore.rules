@@ -85,6 +85,32 @@ service cloud.firestore {
       );
     }
 
+    function canDoctorAccessPatientEhr(patientId) {
+      return isDoctor() && (
+        // Care relationship via active granted consent
+        (
+          exists(/databases/$(database)/documents/doctor_patient_consents/$(patientId + '_' + request.auth.uid)) &&
+          get(/databases/$(database)/documents/doctor_patient_consents/$(patientId + '_' + request.auth.uid)).data.status == 'granted'
+        ) ||
+        // Care relationship via matching hospital between doctor and patient in users collection
+        (
+          ('hospitalId' in getUserData()) &&
+          exists(/databases/$(database)/documents/users/$(patientId)) &&
+          ('hospitalId' in get(/databases/$(database)/documents/users/$(patientId)).data) &&
+          getUserData().hospitalId is string &&
+          getUserData().hospitalId == get(/databases/$(database)/documents/users/$(patientId)).data.hospitalId
+        ) ||
+        // Care relationship via matching hospital in patients collection
+        (
+          ('hospitalId' in getUserData()) &&
+          exists(/databases/$(database)/documents/patients/$(patientId)) &&
+          ('hospitalId' in get(/databases/$(database)/documents/patients/$(patientId)).data) &&
+          getUserData().hospitalId is string &&
+          getUserData().hospitalId == get(/databases/$(database)/documents/patients/$(patientId)).data.hospitalId
+        )
+      );
+    }
+
     // =========================================================================
     // 1. MEDICAL ID DIRECTORY (Pre-auth lookup)
     // =========================================================================
@@ -209,8 +235,16 @@ service cloud.firestore {
       // Subcollection: Blood Cancer EHRs
       match /blood_cancer_ehrs/{recordId} {
         allow read: if isAuthenticated() && (isOwner(patientId) || isClinician());
-        allow create, update: if isAuthenticated() && isClinician();
-        allow delete: if isAuthenticated() && isDoctor();
+        allow create: if isAuthenticated() &&
+          canDoctorAccessPatientEhr(patientId) &&
+          ('patientId' in request.resource.data) &&
+          request.resource.data.patientId is string &&
+          request.resource.data.patientId == patientId;
+        allow update: if isAuthenticated() &&
+          canDoctorAccessPatientEhr(patientId) &&
+          (!('patientId' in request.resource.data) || request.resource.data.patientId == resource.data.patientId) &&
+          (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt);
+        allow delete: if isAuthenticated() && canDoctorAccessPatientEhr(patientId);
       }
 
       // Subcollection: Diagnoses
@@ -228,6 +262,19 @@ service cloud.firestore {
         allow update: if isAuthenticated() && (isOwner(patientId) || isClinician()) &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uploadedBy', 'fabricStatus', 'fabricTxId', 'fabricVersion', 'fabricTimestamp', 'opaqueRecordKey', 'blockchainProof']);
         allow delete: if isAuthenticated() && (isOwner(patientId) || isDoctor());
+      }
+
+      // Subcollection: Clinical Notes (Phase 3C Voice Documentation)
+      match /clinical_notes/{noteId} {
+        // Direct client writes strictly blocked — trusted Cloud Functions only
+        allow write: if false;
+
+        // Reads permitted for:
+        // - Patient themselves
+        // - Attending doctor
+        // - Hospital admin
+        // - Actively assigned nurse
+        allow read: if isAuthenticated() && canAccessPatientVitals(patientId);
       }
     }
 

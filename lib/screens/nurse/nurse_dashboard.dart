@@ -12,6 +12,8 @@ import '../profile_selection_screen.dart';
 import 'create_blood_cancer_ehr_screen.dart';
 import 'record_vitals_screen.dart';
 import 'patient_vitals_history_screen.dart';
+import 'nurse_voice_note_screen.dart';
+import 'patient_notes_history_screen.dart';
 
 class NurseDashboard extends StatefulWidget {
   final OVUser user;
@@ -603,6 +605,63 @@ class _ApprovedApptCard extends StatelessWidget {
                   icon: const Icon(Icons.history_rounded, size: 20, color: OV.onSurface),
                   style: IconButton.styleFrom(
                     backgroundColor: OV.surfaceContainer.withOpacity(0.5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 40,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => NurseVoiceNoteScreen(
+                            patientId: a.patientId,
+                            patientName: a.patientName,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.mic_rounded, size: 16, color: OV.secondary),
+                    label: Text(
+                      'Voice Clinical Note',
+                      style: GoogleFonts.manrope(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: OV.secondary,
+                      side: BorderSide(color: OV.secondary.withOpacity(0.6)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 40,
+                width: 44,
+                child: IconButton(
+                  tooltip: 'Clinical Notes History',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PatientNotesHistoryScreen(
+                          patientId: a.patientId,
+                          patientName: a.patientName,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.description_outlined, size: 20, color: OV.secondary),
+                  style: IconButton.styleFrom(
+                    backgroundColor: OV.secondaryContainer.withOpacity(0.3),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                 ),

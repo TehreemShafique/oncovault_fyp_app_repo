@@ -82,8 +82,8 @@ export class FabricGatewayService {
         identity,
         signer,
         evaluateOptions: () => ({ deadline: Date.now() + 5000 }),
-        endorseOptions: () => ({ deadline: Date.now() + 15000 }),
-        submitOptions: () => ({ deadline: Date.now() + 15000 }),
+        endorseOptions: () => ({ deadline: Date.now() + 60000 }),
+        submitOptions: () => ({ deadline: Date.now() + 30000 }),
         commitStatusOptions: () => ({ deadline: Date.now() + 60000 })
       });
 

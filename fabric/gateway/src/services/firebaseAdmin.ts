@@ -214,10 +214,40 @@ export class FirebaseAdminService {
       if (err.message && (err.message.includes('Conflict') || err.message.includes('Access Denied'))) {
         throw err;
       }
-      // Ignore collectionGroup indexing exceptions in unit/mock tests
+    }
+
+    // 5. Check patient clinical_notes subcollection if expectedPatientId provided
+    if (expectedPatientId) {
+      const noteDoc = await this.firestore
+        .collection('patients')
+        .doc(expectedPatientId)
+        .collection('clinical_notes')
+        .doc(recordId)
+        .get();
+      if (noteDoc.exists) {
+        return { id: noteDoc.id, isClinicalNote: true, ...noteDoc.data() };
+      }
     }
 
     return null;
+  }
+
+  /**
+   * Checks whether a nurse holds an active assignment for a patient in `nurse_patient_assignments`.
+   */
+  public async checkActiveNurseAssignment(nurseId: string, patientId: string): Promise<boolean> {
+    if (!this.firestore) {
+      throw new Error('Firestore is not configured.');
+    }
+    const docId = `${nurseId}_${patientId}`;
+    const directDoc = await this.firestore.collection('nurse_patient_assignments').doc(docId).get();
+    if (directDoc.exists) {
+      const data = directDoc.data() as any;
+      if (data && data.status === 'active') {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -332,6 +362,20 @@ export class FirebaseAdminService {
         }
       } catch (_) {
         // Non-blocking if subcollection does not exist
+      }
+
+      try {
+        const noteRef = this.firestore
+          .collection('patients')
+          .doc(patientId)
+          .collection('clinical_notes')
+          .doc(recordId);
+        const nSnap = await noteRef.get();
+        if (nSnap.exists) {
+          await noteRef.set(updatePayload, { merge: true });
+        }
+      } catch (_) {
+        // Non-blocking if clinical_notes subcollection does not exist
       }
     }
   }

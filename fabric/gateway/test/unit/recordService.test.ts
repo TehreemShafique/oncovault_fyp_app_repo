@@ -23,6 +23,12 @@ describe('RecordService Unit Tests', () => {
     email: 'doctor@example.com'
   };
 
+  const NURSE_USER: AuthenticatedUser = {
+    uid: 'nurse-789',
+    role: 'nurse',
+    email: 'nurse@example.com'
+  };
+
   const MOCK_RECORD_ID = 'rec-sample-001';
   const MOCK_FILE_CONTENT = Buffer.from('PDF_SAMPLE_CLINICAL_CONTENT_LEUKEMIA_BIOPSY_PANEL');
   const EXPECTED_HASH = crypto.createHash('sha256').update(MOCK_FILE_CONTENT).digest('hex').toLowerCase();
@@ -37,7 +43,8 @@ describe('RecordService Unit Tests', () => {
       getMedicalRecord: sinon.stub(),
       getFileBytes: sinon.stub(),
       updateRecordProof: sinon.stub().resolves(),
-      checkDoctorPatientConsent: sinon.stub()
+      checkDoctorPatientConsent: sinon.stub(),
+      checkActiveNurseAssignment: sinon.stub()
     };
 
     mockReconciliation = {
@@ -259,6 +266,118 @@ describe('RecordService Unit Tests', () => {
 
       expect(res.verified).to.be.false;
       expect(res.status).to.equal('NOT_ANCHORED');
+    });
+  });
+
+  describe('Clinical Notes Anchoring & Nurse Authorization', () => {
+    it('should reject anchoring clinical record if it is in DRAFT status', async () => {
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: 'note-draft-001',
+        patientId: 'patient-123',
+        status: 'DRAFT',
+        isClinicalNote: true
+      });
+
+      try {
+        await recordService.anchorRecord(PATIENT_USER, 'note-draft-001');
+        expect.fail('Should have thrown an error');
+      } catch (err: any) {
+        expect(err.message).to.include('because it is in DRAFT status');
+      }
+    });
+
+    it('should successfully anchor clinical note with canonical hashing for assigned nurse', async () => {
+      const mockNote = {
+        id: 'note-sub-001',
+        patientId: 'patient-123',
+        authorUid: NURSE_USER.uid,
+        status: 'SUBMITTED',
+        noteType: 'NURSING_NOTE',
+        clinicalText: 'Patient vitals stable.',
+        rawTranscript: 'patient vitals stable',
+        structuredSummary: { condition: 'stable' },
+        createdAtIso: '2026-10-17T00:00:00.000Z',
+        isClinicalNote: true
+      };
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(mockNote);
+      mockFirebaseAdmin.checkActiveNurseAssignment.resolves(true);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('not found'));
+
+      const noteHash = recordService.computeCanonicalClinicalNoteHash(mockNote);
+      expect(noteHash).to.have.lengthOf(64);
+
+      mockFabricGateway.submitTransaction.resolves({
+        result: JSON.stringify({
+          recordId: 'rec_opaque_note',
+          sha256Hash: noteHash,
+          version: 1,
+          txId: 'tx-note-anchor-001',
+          timestamp: '2026-10-17T00:00:05.000Z'
+        }),
+        txId: 'tx-note-anchor-001'
+      });
+
+      const res = await recordService.anchorRecord(NURSE_USER, 'note-sub-001', undefined, undefined, 'patient-123');
+      expect(res.proof.txId).to.equal('tx-note-anchor-001');
+      expect(res.fileHash).to.equal(noteHash);
+      expect(mockFabricGateway.submitTransaction.calledOnce).to.be.true;
+
+      const submitArgs = mockFabricGateway.submitTransaction.firstCall.args;
+      expect(submitArgs[0]).to.equal('AnchorRecordHash');
+      expect(submitArgs[2]).to.equal(noteHash);
+      const metadata = JSON.parse(submitArgs[3]);
+      expect(metadata.documentType).to.equal('CLINICAL_NOTE');
+    });
+
+    it('should reject nurse from anchoring when not assigned to patient', async () => {
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: 'note-sub-002',
+        patientId: 'patient-unassigned',
+        status: 'SUBMITTED',
+        isClinicalNote: true
+      });
+      mockFirebaseAdmin.checkActiveNurseAssignment.resolves(false);
+
+      try {
+        await recordService.anchorRecord(NURSE_USER, 'note-sub-002', undefined, undefined, 'patient-unassigned');
+        expect.fail('Should have thrown an error');
+      } catch (err: any) {
+        expect(err.message).to.include('Access Denied: Nurse does not hold active assignment');
+      }
+    });
+
+    it('should verify clinical note integrity without fileUrl using canonical note hash', async () => {
+      const mockNote = {
+        id: 'note-sub-001',
+        patientId: PATIENT_USER.uid,
+        authorUid: 'nurse-789',
+        status: 'SUBMITTED',
+        noteType: 'NURSING_NOTE',
+        clinicalText: 'Patient vitals stable.',
+        rawTranscript: 'patient vitals stable',
+        structuredSummary: { condition: 'stable' },
+        createdAtIso: '2026-10-17T00:00:00.000Z',
+        isClinicalNote: true
+      };
+
+      const noteHash = recordService.computeCanonicalClinicalNoteHash(mockNote);
+      mockFirebaseAdmin.getMedicalRecord.resolves(mockNote);
+
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: true,
+        status: 'VERIFIED',
+        sha256Hash: noteHash
+      }));
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        version: 1,
+        txId: 'tx-note-verified-001'
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, 'note-sub-001');
+      expect(res.verified).to.be.true;
+      expect(res.status).to.equal('VERIFIED');
+      expect(res.targetHash).to.equal(noteHash);
     });
   });
 });
