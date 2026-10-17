@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class OVUser {
   final String uid;
   final String name;
@@ -24,12 +26,24 @@ class OVUser {
     'createdAt': createdAt.toIso8601String(),
   };
 
+  static DateTime _parseDate(dynamic val) {
+    if (val == null) return DateTime.now();
+    if (val is Timestamp) return val.toDate();
+    if (val is DateTime) return val;
+    if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+    if (val is String) {
+      final parsed = DateTime.tryParse(val);
+      if (parsed != null) return parsed;
+    }
+    return DateTime.now();
+  }
+
   factory OVUser.fromMap(Map<String, dynamic> map) => OVUser(
-    uid: map['uid'] ?? '',
-    name: map['name'] ?? '',
-    email: map['email'] ?? '',
-    medicalId: map['medicalId'] ?? '',
-    role: map['role'] ?? 'patient',
-    createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
+    uid: (map['uid'] ?? '').toString(),
+    name: (map['name'] ?? map['displayName'] ?? map['fullName'] ?? '').toString(),
+    email: (map['email'] ?? '').toString(),
+    medicalId: (map['medicalId'] ?? map['medical_id'] ?? '').toString(),
+    role: (map['role'] ?? 'patient').toString().trim().toLowerCase(),
+    createdAt: _parseDate(map['createdAt']),
   );
 }

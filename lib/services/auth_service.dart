@@ -40,8 +40,19 @@ class AuthService {
     final data = user.toMap();
 
     await _db.collection('users').doc(uid).set(data);
-    await _db.collection(_collectionForRole(role)).doc(uid).set(data);
-    await _db.collection('medical_id_directory').doc(medId).set({
+    if (role.toLowerCase() == 'doctor') {
+      final docData = Map<String, dynamic>.from(data);
+      docData['availableDays'] = const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+      docData['availableSlots'] = const [
+        '08:00 AM', '09:30 AM', '11:00 AM',
+        '01:30 PM', '03:00 PM', '04:30 PM',
+      ];
+      docData['isAvailable'] = true;
+      await _db.collection('doctors').doc(uid).set(docData);
+    } else {
+      await _db.collection(_collectionForRole(role)).doc(uid).set(data);
+    }
+    await _db.collection('medical_id_directory').doc(medId.toUpperCase()).set({
       'email': email.trim(),
       'uid': uid,
     });
@@ -61,12 +72,12 @@ class AuthService {
 
     if (input.contains('@')) {
       // Direct Email login bypasses directory lookup completely
-      email = input;
+      email = input.toLowerCase();
     } else {
       final lookupId = input.toUpperCase();
       final lookupDoc = await _db.collection('medical_id_directory').doc(lookupId).get();
       if (lookupDoc.exists && lookupDoc.data()?['email'] != null) {
-        email = lookupDoc.data()!['email'] as String;
+        email = (lookupDoc.data()!['email'] as String).trim().toLowerCase();
       } else {
         // Under Phase 1A security rules, unauthenticated queries on /users are strictly blocked.
         // Legacy accounts not yet indexed in medical_id_directory must authenticate via Email + Password,
@@ -78,17 +89,65 @@ class AuthService {
       }
     }
 
-    final cred  = await _auth.signInWithEmailAndPassword(
+    final cred = await _auth.signInWithEmailAndPassword(
       email: email, password: password,
     );
-    final userDoc = await _db.collection('users').doc(cred.user!.uid).get();
-    if (!userDoc.exists) return null;
-    final user = OVUser.fromMap(userDoc.data()!);
 
-    // Ensure medical_id_directory record exists for future Medical ID logins
+    // Attempt to load profile from /users
+    DocumentSnapshot<Map<String, dynamic>> userDoc =
+        await _db.collection('users').doc(cred.user!.uid).get();
+
+    OVUser user;
+    if (userDoc.exists && userDoc.data() != null) {
+      user = OVUser.fromMap(userDoc.data()!);
+    } else {
+      // Self-healing fallback for legacy accounts where /users document was not created
+      // Check role-specific collections (doctors, nurses, patients)
+      Map<String, dynamic>? legacyData;
+      String inferredRole = 'patient';
+
+      final docSnap = await _db.collection('doctors').doc(cred.user!.uid).get();
+      if (docSnap.exists && docSnap.data() != null) {
+        legacyData = docSnap.data()!;
+        inferredRole = 'doctor';
+      } else {
+        final nurseSnap = await _db.collection('nurses').doc(cred.user!.uid).get();
+        if (nurseSnap.exists && nurseSnap.data() != null) {
+          legacyData = nurseSnap.data()!;
+          inferredRole = 'nurse';
+        } else {
+          final patientSnap = await _db.collection('patients').doc(cred.user!.uid).get();
+          if (patientSnap.exists && patientSnap.data() != null) {
+            legacyData = patientSnap.data()!;
+            inferredRole = 'patient';
+          }
+        }
+      }
+
+      final uid = cred.user!.uid;
+      final fallbackMedId = legacyData?['medicalId'] ??
+          'OV-${inferredRole.toUpperCase().substring(0, 2)}-${uid.substring(0, 6).toUpperCase()}';
+      final fallbackName = legacyData?['name'] ?? cred.user!.displayName ?? 'User';
+
+      user = OVUser(
+        uid: uid,
+        name: fallbackName,
+        email: cred.user!.email ?? email,
+        medicalId: fallbackMedId,
+        role: inferredRole,
+        createdAt: DateTime.now(),
+      );
+
+      // Backfill to /users if allowed (e.g. patient self-registration rule)
+      try {
+        await _db.collection('users').doc(uid).set(user.toMap(), SetOptions(merge: true));
+      } catch (_) {}
+    }
+
+    // Ensure medical_id_directory record exists for future Medical ID logins (Self-migration)
     if (user.medicalId.isNotEmpty) {
       try {
-        final dirRef = _db.collection('medical_id_directory').doc(user.medicalId);
+        final dirRef = _db.collection('medical_id_directory').doc(user.medicalId.toUpperCase());
         final dirDoc = await dirRef.get();
         if (!dirDoc.exists) {
           await dirRef.set({'email': user.email, 'uid': user.uid});
@@ -105,8 +164,35 @@ class AuthService {
 
   Future<OVUser?> fetchProfile(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
-    if (!doc.exists) return null;
-    return OVUser.fromMap(doc.data()!);
+    if (doc.exists && doc.data() != null) {
+      return OVUser.fromMap(doc.data()!);
+    }
+    // Fallback for clinicians or patients if /users was not yet backfilled
+    final docSnap = await _db.collection('doctors').doc(uid).get();
+    if (docSnap.exists && docSnap.data() != null) {
+      final d = docSnap.data()!;
+      return OVUser(
+        uid: uid,
+        name: d['name'] ?? '',
+        email: d['email'] ?? '',
+        medicalId: d['medicalId'] ?? '',
+        role: 'doctor',
+        createdAt: DateTime.now(),
+      );
+    }
+    final patientSnap = await _db.collection('patients').doc(uid).get();
+    if (patientSnap.exists && patientSnap.data() != null) {
+      final d = patientSnap.data()!;
+      return OVUser(
+        uid: uid,
+        name: d['name'] ?? '',
+        email: d['email'] ?? '',
+        medicalId: d['medicalId'] ?? '',
+        role: 'patient',
+        createdAt: DateTime.now(),
+      );
+    }
+    return null;
   }
 
   Future<void> signOut() async {

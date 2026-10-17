@@ -113,10 +113,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     setState(() => _isLoading = true);
     try {
       final user = await _auth.signIn(
-        medicalId: _medIdCtrl.text,
+        medicalId: _medIdCtrl.text.trim(),
         password: _passCtrl.text,
       );
       if (!mounted) return;
+      if (user == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Unable to load user profile. Please contact support.',
+                style: GoogleFonts.inter(fontSize: 13)),
+            backgroundColor: OV.error,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+        return;
+      }
       Navigator.pushReplacement(context,
           PageRouteBuilder(
               pageBuilder: (_, a, __) => DashboardScreen(user: user),
@@ -125,13 +134,32 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     } catch (e) {
       if (!mounted) return;
       String msg = 'Sign in failed. Please check your credentials.';
-      final s = e.toString();
-      if (s.contains('user-not-found') || s.contains('No account')) {
-        msg = 'No account found for this Medical ID.';
-      } else if (s.contains('wrong-password') || s.contains('invalid-credential')) {
-        msg = 'Incorrect password. Please try again.';
-      } else if (s.contains('network')) {
-        msg = 'Network error. Please check your connection.';
+      final isEmailInput = _medIdCtrl.text.trim().contains('@');
+      if (e is FirebaseAuthException) {
+        if (e.code == 'user-not-found') {
+          if (isEmailInput) {
+            msg = 'No account found for this email address.';
+          } else if (e.message != null && e.message!.isNotEmpty) {
+            msg = e.message!;
+          } else {
+            msg = 'Medical ID not recognized. If this is an existing account, please sign in with your email address.';
+          }
+        } else if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+          msg = 'Incorrect password. Please try again.';
+        } else if (e.code == 'user-disabled') {
+          msg = 'This account has been disabled. Please contact an administrator.';
+        } else if (e.code == 'too-many-requests') {
+          msg = 'Too many failed login attempts. Please try again later.';
+        } else if (e.message != null && e.message!.isNotEmpty) {
+          msg = e.message!;
+        }
+      } else {
+        final s = e.toString().toLowerCase();
+        if (s.contains('network')) {
+          msg = 'Network error. Please check your connection.';
+        } else {
+          msg = e.toString().replaceFirst('Exception: ', '');
+        }
       }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(msg, style: GoogleFonts.inter(fontSize: 13)),

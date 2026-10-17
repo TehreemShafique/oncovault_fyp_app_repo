@@ -42,7 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final user = widget.user;
     if (user != null) {
-      switch (user.role) {
+      switch (user.role.trim().toLowerCase()) {
         case 'patient':
           return PatientDashboard(
             patientId:   user.uid,

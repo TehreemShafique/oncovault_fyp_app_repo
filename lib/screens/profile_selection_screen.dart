@@ -72,14 +72,26 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen>
               Row(children: [
                 Container(padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(color: OV.primary.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                    child: Icon(Icons.grid_view_rounded, color: OV.primary, size: 16)),
+                    child: const Icon(Icons.grid_view_rounded, color: OV.primary, size: 16)),
                 const SizedBox(width: 8),
                 Text('OncoVault', style: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w700, color: OV.primary)),
               ]),
-              Container(width: 38, height: 38,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: OV.surfaceContainer,
-                      border: Border.all(color: OV.outlineVariant, width: 1.5)),
-                  child: const Icon(Icons.person_rounded, size: 20, color: OV.onSurfaceVariant)),
+              GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen())),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: OV.surfaceContainer,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: OV.outlineVariant.withOpacity(0.6), width: 1),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.login_rounded, size: 16, color: OV.primary),
+                    const SizedBox(width: 6),
+                    Text('Sign In', style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600, color: OV.primary)),
+                  ]),
+                ),
+              ),
             ])),
 
         // ── Scrollable cards ────────────────────────────────────
@@ -113,7 +125,18 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen>
                           onTap: () { setState(() => _selectedIndex = i); HapticFeedback.lightImpact(); })));
             }),
 
-
+            const SizedBox(height: 12),
+            // Existing user sign-in link
+            GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen())),
+                child: Padding(padding: const EdgeInsets.only(bottom: 24),
+                    child: RichText(textAlign: TextAlign.center, text: TextSpan(
+                        style: GoogleFonts.inter(fontSize: 13, color: OV.onSurfaceVariant),
+                        children: [
+                          const TextSpan(text: 'Already registered? '),
+                          TextSpan(text: 'Sign In here', style: GoogleFonts.inter(
+                              fontSize: 13, fontWeight: FontWeight.w700, color: OV.primary)),
+                        ])))),
           ]),
         )),
 
