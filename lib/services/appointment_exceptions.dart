@@ -121,3 +121,18 @@ class DoctorScheduleConflictException extends AppointmentException {
     this.reason = '',
   });
 }
+
+/// Thrown when the backend appointment service or Cloud Function endpoint is unreachable,
+/// unavailable, or returns an unhandled internal transport failure (e.g. CORS preflight failure,
+/// offline state, or undeployed Cloud Function endpoint).
+class AppointmentNetworkException extends AppointmentStateConflictException {
+  final String? originalCode;
+
+  const AppointmentNetworkException(
+    super.message, {
+    required super.appointmentId,
+    super.currentStatus = 'scheduled',
+    super.requiredStatus = 'scheduled',
+    this.originalCode,
+  });
+}

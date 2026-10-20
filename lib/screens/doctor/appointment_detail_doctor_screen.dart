@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/appointment_exceptions.dart';
 import 'doctor_widgets.dart';
 import 'blood_cancer_ehr_screen.dart';
 
@@ -32,19 +33,71 @@ class _AppointmentDetailDoctorScreenState extends State<AppointmentDetailDoctorS
   void dispose() { _notesCtrl.dispose(); super.dispose(); }
 
   Future<void> _approve() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
-    await widget.service.approveAppointment(_appt);
-    if (!mounted) return;
-    setState(() { _appt = _appt.copyWith(status: AppointmentStatus.confirmed); _isLoading = false; });
-    _snack('Appointment approved ✓', OV.tertiary);
+
+    try {
+      await widget.service.approveAppointment(_appt);
+      if (!mounted) return;
+      setState(() {
+        _appt = _appt.copyWith(status: AppointmentStatus.confirmed);
+      });
+      _snack('Appointment approved ✓', OV.tertiary);
+    } catch (e) {
+      // Re-read appointment after ambiguous network outcomes before offering retry
+      try {
+        final currentAppt = await widget.service.getAppointment(_appt.id);
+        if (currentAppt != null) {
+          if (mounted) {
+            setState(() {
+              _appt = currentAppt;
+            });
+          }
+          if (currentAppt.status == AppointmentStatus.confirmed) {
+            if (mounted) {
+              _snack('Appointment was confirmed on the server ✓', OV.tertiary);
+            }
+            return;
+          }
+        }
+      } catch (_) {
+        // Ignore read failure and present actionable approval error
+      }
+
+      if (!mounted) return;
+      final errorMsg = e is AppointmentException
+          ? e.message
+          : 'Approval failed: ${e.toString()}';
+      _snack(errorMsg, OV.error);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   Future<void> _markComplete() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
-    await widget.service.markAppointmentComplete(_appt);
-    if (!mounted) return;
-    setState(() { _appt = _appt.copyWith(status: AppointmentStatus.completed); _isLoading = false; });
-    _snack('Marked as completed', OV.secondary);
+
+    try {
+      await widget.service.markAppointmentComplete(_appt);
+      if (!mounted) return;
+      setState(() {
+        _appt = _appt.copyWith(status: AppointmentStatus.completed);
+      });
+      _snack('Marked as completed', OV.secondary);
+    } catch (e) {
+      if (!mounted) return;
+      final errorMsg = e is AppointmentException
+          ? e.message
+          : 'Failed to complete appointment: ${e.toString()}';
+      _snack(errorMsg, OV.error);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   void _showReschedule() {

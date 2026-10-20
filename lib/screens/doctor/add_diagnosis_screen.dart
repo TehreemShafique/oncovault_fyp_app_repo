@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_theme.dart';
 import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/fabric_gateway_service.dart';
 import 'doctor_widgets.dart';
 import 'voice_notes_screen.dart';
 
@@ -99,12 +100,12 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
                       color: OV.onSurface)),
               const SizedBox(height: 8),
               Text(
-                  'The diagnosis has been added to ${widget.patientName}\'s medical record and verified on the blockchain.',
+                  'The diagnosis has been added to ${widget.patientName}\'s clinical profile.',
                   style: GoogleFonts.inter(
                       fontSize: 13, color: OV.onSurfaceVariant, height: 1.5),
                   textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              const BlockchainBadge(),
+              const BlockchainBadge(status: FabricVerificationStatus.notAnchored),
               const SizedBox(height: 24),
               SizedBox(
                   width: double.infinity, height: 50,

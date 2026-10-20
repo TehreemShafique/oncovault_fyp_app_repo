@@ -192,10 +192,16 @@ class FabricGatewayService {
     if (_customBaseUrl != null && _customBaseUrl!.trim().isNotEmpty) {
       return _customBaseUrl!.trim().replaceAll(RegExp(r'/+$'), '');
     }
+    const int gatewayPort = int.fromEnvironment('FABRIC_GATEWAY_PORT', defaultValue: 5001);
     if (!kIsWeb && Platform.isAndroid) {
-      return 'http://10.0.2.2:5001';
+      const bool useAdbReverse = bool.fromEnvironment('USE_ADB_REVERSE', defaultValue: true);
+      const bool useEmulators = bool.fromEnvironment('USE_FIREBASE_EMULATORS', defaultValue: false);
+      if (useAdbReverse || useEmulators) {
+        return 'http://127.0.0.1:$gatewayPort';
+      }
+      return 'http://10.0.2.2:$gatewayPort';
     }
-    return 'http://127.0.0.1:5001';
+    return 'http://127.0.0.1:$gatewayPort';
   }
 
   // ── Authentication & Token Acquisition ─────────────────────────────

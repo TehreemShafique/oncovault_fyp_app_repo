@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/medical_record_model.dart';
 import '../../services/appointment_service.dart';
+import '../../services/fabric_gateway_service.dart';
+import '../doctor/doctor_widgets.dart';
 import 'report_viewer_screen.dart';
 import 'diagnosis_history_screen.dart';
 
@@ -228,6 +230,16 @@ class _RecordCard extends StatelessWidget {
     }
   }
 
+  FabricVerificationStatus get _status {
+    if (record.fabricTxId == null || record.fabricTxId!.isEmpty) {
+      return FabricVerificationStatus.notAnchored;
+    }
+    // The record has an on-chain Fabric proof, but current content has not yet been
+    // freshly verified against the ledger on this view. Show neutral 'Check Integrity'
+    // until verified in ReportViewerScreen. Never assume green without fresh verification.
+    return FabricVerificationStatus.pending;
+  }
+
   @override
   Widget build(BuildContext context) => GestureDetector(
       onTap: onTap,
@@ -257,19 +269,25 @@ class _RecordCard extends StatelessWidget {
                         fontSize: 10, fontWeight: FontWeight.w700, color: OV.primary))),
             ]),
             const SizedBox(height: 12),
-            Row(children: [
-              GestureDetector(onTap: onTap, child: Row(children: [
-                Icon(Icons.visibility_outlined, size: 14, color: OV.onSurfaceVariant),
-                const SizedBox(width: 4),
-                Text('View', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.onSurface)),
-              ])),
-              const SizedBox(width: 20),
-              GestureDetector(onTap: () {}, child: Row(children: [
-                Icon(Icons.download_outlined, size: 14, color: OV.onSurfaceVariant),
-                const SizedBox(width: 4),
-                Text('Download', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.onSurface)),
-              ])),
-            ]),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                BlockchainBadge(status: _status, onTap: onTap),
+                Row(children: [
+                  GestureDetector(onTap: onTap, child: Row(children: [
+                    Icon(Icons.visibility_outlined, size: 14, color: OV.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text('View', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.onSurface)),
+                  ])),
+                  const SizedBox(width: 16),
+                  GestureDetector(onTap: () {}, child: Row(children: [
+                    Icon(Icons.download_outlined, size: 14, color: OV.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text('Download', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: OV.onSurface)),
+                  ])),
+                ]),
+              ],
+            ),
           ])));
 }
 

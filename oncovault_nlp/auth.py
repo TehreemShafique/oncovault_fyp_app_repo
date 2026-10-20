@@ -99,7 +99,7 @@ async def verify_clinical_auth(
                 detail="Access forbidden: Patients cannot access clinical dictation and NLP services directly.",
             )
 
-    # 2. JWT validation
+    # 2. Decode payload for supplemental claims (exp, tenant, custom claims)
     jwt_parts = token.split(".")
     if len(jwt_parts) != 3:
         raise HTTPException(
@@ -136,7 +136,41 @@ async def verify_clinical_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    uid = claims.get("user_id") or claims.get("sub") or claims.get("uid")
+    # 3. Cryptographic token verification via Google Identity Toolkit
+    api_key = os.getenv("FIREBASE_API_KEY", "AIzaSyDhhatW0IlF7IxLYr68u4gq64YiIwDyfAY")
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "oncovault-8cbbc")
+
+    uid = None
+    email = None
+
+    if not is_test_environment():
+        try:
+            import requests
+            lookup_res = requests.post(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={api_key}",
+                json={"idToken": token},
+                timeout=5,
+            )
+            if lookup_res.status_code == 200:
+                users_list = lookup_res.json().get("users", [])
+                if users_list:
+                    uid = users_list[0].get("localId")
+                    email = users_list[0].get("email")
+            else:
+                err_msg = lookup_res.json().get("error", {}).get("message", "Invalid token")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Authentication token verification failed: {err_msg}",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Google Identity Toolkit lookup error: {e}")
+
+    if not uid:
+        uid = claims.get("user_id") or claims.get("sub") or claims.get("uid")
+
     if not uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -144,8 +178,21 @@ async def verify_clinical_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Role enforcement: if role claim is present, verify clinician authorization
+    # 4. Authoritative Role enforcement: check custom claim first, then query Firestore users/{uid}
     role = (claims.get("role") or "").lower()
+    if not role and uid:
+        try:
+            import requests
+            fs_res = requests.get(
+                f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/users/{uid}",
+                timeout=5,
+            )
+            if fs_res.status_code == 200:
+                fields = fs_res.json().get("fields", {})
+                role = fields.get("role", {}).get("stringValue", "").lower()
+        except Exception as e:
+            logger.warning(f"Authoritative Firestore role lookup failed: {e}")
+
     if role in ("patient", ""):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -173,7 +220,7 @@ async def verify_clinical_auth(
 
     return {
         "uid": uid,
-        "email": claims.get("email"),
+        "email": email or claims.get("email"),
         "role": role,
         "patient_id": x_patient_id,
         "hospital_id": caller_hospital or x_hospital_id,

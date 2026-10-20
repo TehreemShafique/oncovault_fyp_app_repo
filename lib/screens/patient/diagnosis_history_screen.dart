@@ -5,6 +5,9 @@ import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/medical_record_model.dart';
 import '../../services/appointment_service.dart';
+import '../../services/fabric_gateway_service.dart';
+import '../doctor/doctor_widgets.dart';
+import 'report_viewer_screen.dart';
 
 class DiagnosisHistoryScreen extends StatelessWidget {
   final String patientId;
@@ -178,6 +181,33 @@ class _TimelineItem extends StatelessWidget {
                     Text(record.summary, style: GoogleFonts.inter(
                         fontSize: 12, color: OV.onSurfaceVariant, height: 1.5)),
                   ],
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      BlockchainBadge(
+                        status: (record.fabricTxId == null || record.fabricTxId!.isEmpty)
+                            ? FabricVerificationStatus.notAnchored
+                            : FabricVerificationStatus.pending,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => ReportViewerScreen(record: record)),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => ReportViewerScreen(record: record)),
+                        ),
+                        child: Row(children: [
+                          Text('Inspect',
+                              style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: OV.primary)),
+                          const SizedBox(width: 4),
+                          Icon(Icons.chevron_right_rounded, size: 14, color: OV.primary),
+                        ]),
+                      ),
+                    ],
+                  ),
                 ])))),
       ]),
     );

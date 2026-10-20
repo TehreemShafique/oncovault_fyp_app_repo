@@ -11,6 +11,7 @@ import '../../models/vital_sign_model.dart';
 import '../../models/clinical_note_model.dart';
 import '../../models/treatment_plan_model.dart';
 import '../../services/treatment_tracking_service.dart';
+import '../../services/fabric_gateway_service.dart';
 import '../nurse/patient_vitals_history_screen.dart';
 import '../nurse/patient_notes_history_screen.dart';
 import 'doctor_widgets.dart';
@@ -411,7 +412,10 @@ class _ClinicalEntry extends StatelessWidget {
           const SizedBox(height: 4),
           Text(entry.diagnosisDetails, style: GoogleFonts.inter(
               fontSize: 12, color: OV.onSurfaceVariant, height: 1.4)),
-          if (entry.blockchainVerified) ...[const SizedBox(height: 8), const BlockchainBadge()],
+          const SizedBox(height: 8),
+          const BlockchainBadge(
+            status: FabricVerificationStatus.notAnchored,
+          ),
         ])),
       ]));
 }

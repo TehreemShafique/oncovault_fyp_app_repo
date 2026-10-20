@@ -262,7 +262,14 @@ class NotificationService {
     }
 
     try {
-      final token = await _messaging.getToken();
+      //final token = await _messaging.getToken();
+      final token = kIsWeb
+    ? await _messaging.getToken(
+        vapidKey: const String.fromEnvironment(
+          'FIREBASE_WEB_VAPID_KEY',
+        ),
+      )
+    : await _messaging.getToken();
       if (token == null || token.trim().isEmpty) {
         return null;
       }

@@ -457,7 +457,10 @@ export const approveAppointmentHandler = async (
  */
 export const approveAppointment = onCall(
   {
+    region: 'us-central1',
     cors: true,
+    enforceAppCheck: false,
+    invoker: 'public',
   },
   async (request) => {
     return approveAppointmentHandler(request);

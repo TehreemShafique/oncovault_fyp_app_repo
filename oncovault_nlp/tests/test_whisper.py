@@ -1,3 +1,4 @@
+import os
 import io
 import wave
 import struct
@@ -58,3 +59,24 @@ def test_transcribe_synthetic_audio():
     assert data["success"] is True
     assert "transcript" in data
     assert data["language"] == "en"
+
+def test_transcribe_m4a_synthetic_audio():
+    fixture_path = os.path.join(os.path.dirname(__file__), "fixtures", "synthetic_test_clip.m4a")
+    if not os.path.exists(fixture_path):
+        pytest.skip("Synthetic m4a fixture not found")
+
+    with open(fixture_path, "rb") as f:
+        audio_bytes = f.read()
+
+    response = client.post(
+        "/transcribe",
+        files={"audio": ("synthetic_test_clip.m4a", audio_bytes, "audio/m4a")},
+        headers={"Authorization": "Bearer test_doctor_token"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["duration"] >= 1.0
+    assert "transcript" in data
+
+

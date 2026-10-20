@@ -4,7 +4,9 @@ import * as admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
-  admin.initializeApp();
+  admin.initializeApp({
+    projectId: process.env.GCLOUD_PROJECT || 'demo-oncovault-local',
+  });
 }
 
 // Export Cloud Functions

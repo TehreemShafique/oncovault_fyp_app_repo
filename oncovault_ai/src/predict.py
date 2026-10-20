@@ -21,6 +21,10 @@ class DiagnosticEngine:
     _instance: Optional['DiagnosticEngine'] = None
     
     def __init__(self, models_root: str = "oncovault_ai/models"):
+        if not os.path.exists(models_root):
+            pkg_models = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
+            if os.path.exists(pkg_models):
+                models_root = pkg_models
         self.models_root = models_root
         self.symptom_model = None
         self.symptom_metadata = {}

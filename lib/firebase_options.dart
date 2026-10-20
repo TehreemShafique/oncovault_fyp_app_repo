@@ -40,6 +40,35 @@ class DefaultFirebaseOptions {
     }
   }
 
+  static FirebaseOptions get emulatorOptions {
+    if (kIsWeb) {
+      return emulatorWeb;
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return emulatorAndroid;
+      default:
+        return emulatorWeb;
+    }
+  }
+
+  static const FirebaseOptions emulatorAndroid = FirebaseOptions(
+    apiKey: 'demo-api-key',
+    appId: '1:552811546534:android:demo-local',
+    messagingSenderId: '552811546534',
+    projectId: 'demo-oncovault-local',
+    storageBucket: 'demo-oncovault-local.appspot.com',
+  );
+
+  static const FirebaseOptions emulatorWeb = FirebaseOptions(
+    apiKey: 'demo-api-key',
+    appId: '1:552811546534:web:demo-local',
+    messagingSenderId: '552811546534',
+    projectId: 'demo-oncovault-local',
+    authDomain: '127.0.0.1:9099',
+    storageBucket: 'demo-oncovault-local.appspot.com',
+  );
+
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyDNiGouhzzZSJ0q2gKgJ2mK2brSSuRxfKk',
     appId: '1:552811546534:web:b1273e155d12dee633b167',

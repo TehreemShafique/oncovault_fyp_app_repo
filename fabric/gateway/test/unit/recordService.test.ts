@@ -268,61 +268,286 @@ describe('RecordService Unit Tests', () => {
   });
 
   describe('Record Verification', () => {
-    it('should return VERIFIED when hash matches on ledger', async () => {
+    it('should return VERIFIED when binary report bytes match ledger proof (Test A)', async () => {
       mockFirebaseAdmin.getMedicalRecord.resolves({
         id: MOCK_RECORD_ID,
         patientId: PATIENT_USER.uid,
+        fileUrl: 'gs://mock-bucket/records/sample.pdf',
         fileHash: EXPECTED_HASH
       });
+      mockFirebaseAdmin.getFileBytes.withArgs('gs://mock-bucket/records/sample.pdf').resolves(MOCK_FILE_CONTENT);
 
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_sample',
+        sha256Hash: EXPECTED_HASH,
+        version: 1,
+        txId: 'tx-verified-999',
+        timestamp: '2026-10-17T00:00:00Z',
+        status: 'ACTIVE'
+      }));
       mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
         verified: true,
         status: 'VERIFIED',
         sha256Hash: EXPECTED_HASH
-      }));
-      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
-        version: 1,
-        txId: 'tx-verified-999'
       }));
 
       const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID, EXPECTED_HASH);
 
       expect(res.verified).to.be.true;
       expect(res.status).to.equal('VERIFIED');
+      expect(res.targetHash).to.equal(EXPECTED_HASH);
     });
 
-    it('should return TAMPERED_OR_MISMATCH when hash does not match ledger', async () => {
-      const tamperedHash = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-      mockFirebaseAdmin.getMedicalRecord.resolves({
-        id: MOCK_RECORD_ID,
+    it('should return TAMPERED_OR_MISMATCH when clinical field changes while stored fileHash remains unchanged (Test B)', async () => {
+      // Attacker modified summary in Firestore, but left the old fileHash in place
+      const initialRecord = {
+        id: 'meta-rec-001',
         patientId: PATIENT_USER.uid,
-        fileHash: tamperedHash
-      });
+        type: 'report',
+        subtype: 'CBC',
+        facility: 'Oncology Ward 3A',
+        summary: 'Original uncorrupted clinical diagnosis: Remission Stage 1'
+      };
+      const originalCanonicalHash = recordService.computeCanonicalMetadataHash(initialRecord);
+
+      // Now simulate unauthorized mutation of summary field in Firestore
+      const tamperedRecord = {
+        ...initialRecord,
+        summary: 'TAMPERED: Altered diagnosis text Stage 4 Relapse',
+        fileHash: originalCanonicalHash // Stored hash was NOT updated by attacker
+      };
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(tamperedRecord);
+
+      // Fabric ledger holds the original genuine proof
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_meta',
+        sha256Hash: originalCanonicalHash,
+        version: 1,
+        txId: 'tx-orig-anchor-111',
+        timestamp: '2026-10-17T00:00:00Z',
+        status: 'ACTIVE'
+      }));
+
+      // Fabric on-chain verification of the newly computed hash returns mismatch
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: false,
+        status: 'TAMPERED_OR_MISMATCH'
+      }));
+
+      // Client passes old fileHash, but gateway must recompute from current Firestore content and catch mismatch
+      const res = await recordService.verifyRecord(PATIENT_USER, 'meta-rec-001', originalCanonicalHash);
+
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.targetHash).to.not.equal(originalCanonicalHash);
+      expect(res.message).to.include('differs from on-chain proof');
+    });
+
+    it('should return TAMPERED_OR_MISMATCH when both clinical content and stored fileHash are altered (Test C)', async () => {
+      const originalRecord = {
+        id: 'meta-rec-002',
+        patientId: PATIENT_USER.uid,
+        type: 'report',
+        subtype: 'CBC',
+        facility: 'Oncology Ward 3A',
+        summary: 'Initial benign result'
+      };
+      const originalCanonicalHash = recordService.computeCanonicalMetadataHash(originalRecord);
+
+      const tamperedRecord: Record<string, any> = {
+        ...originalRecord,
+        summary: 'FORGED: Critical relapse detected without physician authorization'
+      };
+      const forgedHash = recordService.computeCanonicalMetadataHash(tamperedRecord);
+      tamperedRecord['fileHash'] = forgedHash; // Attacker updated fileHash to match their forged text
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(tamperedRecord);
+
+      // Ledger has original proof
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_meta_2',
+        sha256Hash: originalCanonicalHash,
+        version: 1,
+        txId: 'tx-ledger-proof-222',
+        timestamp: '2026-10-17T00:00:00Z',
+        status: 'ACTIVE'
+      }));
 
       mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
         verified: false,
         status: 'TAMPERED_OR_MISMATCH'
       }));
 
-      const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID, tamperedHash);
+      const res = await recordService.verifyRecord(PATIENT_USER, 'meta-rec-002', forgedHash);
 
       expect(res.verified).to.be.false;
       expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.targetHash).to.equal(forgedHash);
     });
 
-    it('should return NOT_ANCHORED when record does not exist on ledger', async () => {
+    it('should return TAMPERED_OR_MISMATCH when storage file bytes are altered (Test D)', async () => {
+      const tamperedBytes = Buffer.from('CORRUPTED_OR_TAMPERED_FILE_BYTES_IN_STORAGE');
+      const tamperedBytesHash = crypto.createHash('sha256').update(tamperedBytes).digest('hex').toLowerCase();
+
       mockFirebaseAdmin.getMedicalRecord.resolves({
         id: MOCK_RECORD_ID,
         patientId: PATIENT_USER.uid,
+        fileUrl: 'gs://mock-bucket/records/sample.pdf',
+        fileHash: EXPECTED_HASH // Old hash in Firestore
+      });
+      // Storage returns tampered bytes
+      mockFirebaseAdmin.getFileBytes.withArgs('gs://mock-bucket/records/sample.pdf').resolves(tamperedBytes);
+
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_sample',
+        sha256Hash: EXPECTED_HASH,
+        version: 1,
+        txId: 'tx-sample-333',
+        status: 'ACTIVE'
+      }));
+
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: false,
+        status: 'TAMPERED_OR_MISMATCH'
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID);
+
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.targetHash).to.equal(tamperedBytesHash);
+    });
+
+    it('should return TAMPERED_OR_MISMATCH when storage file is missing or unreadable', async () => {
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: MOCK_RECORD_ID,
+        patientId: PATIENT_USER.uid,
+        fileUrl: 'gs://mock-bucket/deleted.pdf',
         fileHash: EXPECTED_HASH
       });
+      mockFirebaseAdmin.getFileBytes.rejects(new Error('File not found in storage bucket'));
 
-      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').rejects(new Error('Record not found on ledger'));
+      const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID);
+
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.message).to.include('Authoritative storage file is missing or unreadable');
+    });
+
+    it('should verify metadata record under its canonical hashing format (Test E)', async () => {
+      const validMetaRecord = {
+        id: 'legacy-meta-001',
+        patientId: PATIENT_USER.uid,
+        type: 'report',
+        subtype: 'PATHOLOGY',
+        facility: 'Memorial Oncology',
+        summary: 'Bone marrow aspirate indicates complete molecular response'
+      };
+      const canonicalHash = recordService.computeCanonicalMetadataHash(validMetaRecord);
+
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        ...validMetaRecord,
+        fileHash: canonicalHash
+      });
+
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_legacy',
+        sha256Hash: canonicalHash,
+        version: 1,
+        txId: 'tx-legacy-444',
+        status: 'ACTIVE'
+      }));
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: true,
+        status: 'VERIFIED'
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, 'legacy-meta-001');
+
+      expect(res.verified).to.be.true;
+      expect(res.status).to.equal('VERIFIED');
+      expect(res.targetHash).to.equal(canonicalHash);
+    });
+
+    it('should return NOT_ANCHORED when record does not exist on ledger (Test F)', async () => {
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: MOCK_RECORD_ID,
+        patientId: PATIENT_USER.uid,
+        fileUrl: 'gs://mock-bucket/sample.pdf',
+        fileHash: EXPECTED_HASH
+      });
+      mockFirebaseAdmin.getFileBytes.resolves(MOCK_FILE_CONTENT);
+
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('Record rec_opaque_sample does not exist on ledger.'));
 
       const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID, EXPECTED_HASH);
 
       expect(res.verified).to.be.false;
       expect(res.status).to.equal('NOT_ANCHORED');
+      expect(res.message).to.include('Record has not been anchored on the blockchain ledger');
+    });
+
+    it('should return VERIFICATION_UNAVAILABLE on transient Fabric error without reporting fake mismatch (Test G)', async () => {
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: MOCK_RECORD_ID,
+        patientId: PATIENT_USER.uid,
+        fileUrl: 'gs://mock-bucket/sample.pdf',
+        fileHash: EXPECTED_HASH
+      });
+      mockFirebaseAdmin.getFileBytes.resolves(MOCK_FILE_CONTENT);
+
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('503 Service Unavailable: peer connection refused'));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, MOCK_RECORD_ID);
+
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('VERIFICATION_UNAVAILABLE');
+      expect(res.message).to.include('Ledger verification unavailable');
+    });
+
+    it('should reject unauthorized caller attempting to verify another patient record (Test H)', async () => {
+      const OTHER_PATIENT: AuthenticatedUser = { uid: 'unauthorized-intruder', role: 'patient', email: 'intruder@evil.com' };
+      mockFirebaseAdmin.getMedicalRecord.resolves({
+        id: MOCK_RECORD_ID,
+        patientId: 'victim-patient-123',
+        fileUrl: 'gs://mock-bucket/records/sample.pdf'
+      });
+
+      try {
+        await recordService.verifyRecord(OTHER_PATIENT, MOCK_RECORD_ID);
+        expect.fail('Should have thrown authorization exception');
+      } catch (err: any) {
+        expect(err.message).to.include('Patients may only access their own medical records');
+      }
+    });
+
+    it('should prevent client-supplied fake hash from bypassing verification when content is tampered', async () => {
+      // Clinical content was altered on server, but attacker sends clientSpecifiedHash = originalLedgerHash
+      const tamperedRecord = {
+        id: 'meta-rec-003',
+        patientId: PATIENT_USER.uid,
+        type: 'report',
+        summary: 'Tampered summary'
+      };
+      const actualHash = recordService.computeCanonicalMetadataHash(tamperedRecord);
+      const originalLedgerHash = '1111111111111111111111111111111111111111111111111111111111111111';
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(tamperedRecord);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rec_opaque_3',
+        sha256Hash: originalLedgerHash,
+        version: 1,
+        status: 'ACTIVE'
+      }));
+
+      // Attacker passes the ledger's hash in clientSpecifiedHash hoping to fool verification
+      const res = await recordService.verifyRecord(PATIENT_USER, 'meta-rec-003', originalLedgerHash);
+
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.targetHash).to.equal(actualHash);
+      expect(res.message).to.include('Authoritative clinical content SHA-256 digest differs from on-chain proof');
     });
   });
 
@@ -428,7 +653,8 @@ describe('RecordService Unit Tests', () => {
       }));
       mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
         version: 1,
-        txId: 'tx-note-verified-001'
+        txId: 'tx-note-verified-001',
+        sha256Hash: noteHash
       }));
 
       const res = await recordService.verifyRecord(PATIENT_USER, 'note-sub-001');

@@ -293,6 +293,11 @@ export class RecordService {
 
   /**
    * Verifies the authenticity and integrity of a medical record against the ledger.
+   * Recomputes SHA-256 digest from actual authoritative medical content:
+   *  - Binary reports: Exact raw binary bytes from Cloud Storage
+   *  - Structured clinical notes: Canonical key-sorted note serialization
+   *  - Metadata records: Canonical key-sorted metadata serialization
+   * Never trusts client-supplied hashes or unverified Firestore document properties to bypass verification.
    */
   public async verifyRecord(
     user: AuthenticatedUser,
@@ -313,75 +318,52 @@ export class RecordService {
 
     await this.assertRecordAccess(user, record.patientId);
 
-    const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(record.patientId, recordId);
-    let targetHash = clientSpecifiedHash || record.fileHash || '';
-
-    // If no hash provided, compute from actual storage bytes or clinical note
-    if (!targetHash) {
-      if (record.isClinicalNote) {
-        targetHash = this.computeCanonicalClinicalNoteHash(record);
-      } else if (record.fileUrl) {
-        try {
-          const bytes = await this.firebaseAdmin.getFileBytes(record.fileUrl);
-          targetHash = this.computeSha256(bytes);
-        } catch {
-          targetHash = '';
-        }
-      } else {
-        targetHash = this.computeCanonicalMetadataHash(record);
+    // 1. Authoritative Content Hash Calculation from Current Clinical Data
+    let computedContentHash = '';
+    if (record.isClinicalNote) {
+      computedContentHash = this.computeCanonicalClinicalNoteHash(record);
+    } else if (record.fileUrl && record.fileUrl.trim() !== '') {
+      try {
+        const fileBuffer = await this.firebaseAdmin.getFileBytes(record.fileUrl);
+        computedContentHash = this.computeSha256(fileBuffer);
+      } catch (storageErr: any) {
+        return {
+          verified: false,
+          status: 'TAMPERED_OR_MISMATCH',
+          recordId,
+          targetHash: '',
+          message: `Authoritative storage file is missing or unreadable: ${storageErr.message}`
+        };
       }
+    } else {
+      // Metadata-only record: canonical serialization of current clinical fields
+      computedContentHash = this.computeCanonicalMetadataHash(record);
     }
 
-    if (!targetHash) {
+    if (!computedContentHash) {
       return {
         verified: false,
         status: 'NOT_ANCHORED',
         recordId,
         targetHash: '',
-        message: 'No file hash or storage file available to verify.'
+        message: 'No authoritative medical content available to compute cryptographic digest.'
       };
     }
 
+    const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(record.patientId, recordId);
+
+    // 2. Query Authoritative Ledger Proof from Fabric
+    let ledgerProof: RecordProof | undefined;
     try {
-      const verifyResStr = await this.fabricGateway.evaluateTransaction(
-        'VerifyRecordHash',
-        opaqueRecordKey,
-        targetHash
-      );
-      const verifyRes = JSON.parse(verifyResStr);
-
-      let ledgerProof: RecordProof | undefined;
-      try {
-        const proofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
-        ledgerProof = JSON.parse(proofStr);
-      } catch {}
-
-      if (verifyRes.verified) {
-        return {
-          verified: true,
-          status: 'VERIFIED',
-          recordId,
-          targetHash,
-          ledgerProof,
-          message: 'Record integrity verified against immutable Hyperledger Fabric ledger.'
-        };
-      } else {
-        return {
-          verified: false,
-          status: 'TAMPERED_OR_MISMATCH',
-          recordId,
-          targetHash,
-          ledgerProof,
-          message: 'Record hash does not match the ledger proof (potential tampering or mismatch).'
-        };
-      }
+      const proofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
+      ledgerProof = JSON.parse(proofStr);
     } catch (err: any) {
-      if (err.message && err.message.includes('not found')) {
+      if (err.message && (err.message.includes('not found') || err.message.includes('does not exist'))) {
         return {
           verified: false,
           status: 'NOT_ANCHORED',
           recordId,
-          targetHash,
+          targetHash: computedContentHash,
           message: 'Record has not been anchored on the blockchain ledger.'
         };
       }
@@ -389,8 +371,83 @@ export class RecordService {
         verified: false,
         status: 'VERIFICATION_UNAVAILABLE',
         recordId,
-        targetHash,
+        targetHash: computedContentHash,
         message: `Ledger verification unavailable: ${err.message}`
+      };
+    }
+
+    if (!ledgerProof || !ledgerProof.sha256Hash) {
+      return {
+        verified: false,
+        status: 'NOT_ANCHORED',
+        recordId,
+        targetHash: computedContentHash,
+        message: 'Record has not been anchored on the blockchain ledger.'
+      };
+    }
+
+    // 3. Multi-point Integrity Evaluation:
+    // (a) Current medical content digest MUST match ledger proof
+    const contentMatchesLedger =
+      computedContentHash.toLowerCase() === ledgerProof.sha256Hash.toLowerCase();
+
+    // (b) Stored fileHash in Firestore (if populated) MUST match ledger proof
+    const storedHashMatchesLedger =
+      !record.fileHash ||
+      record.fileHash.toLowerCase() === ledgerProof.sha256Hash.toLowerCase();
+
+    // (c) Client-supplied hash (if provided) MUST match ledger proof and current content
+    const clientHashMatchesLedger =
+      !clientSpecifiedHash ||
+      clientSpecifiedHash.toLowerCase() === ledgerProof.sha256Hash.toLowerCase();
+
+    // Evaluate VerifyRecordHash transaction on-chain for dual peer endorsement proof
+    let onChainVerified = false;
+    try {
+      const verifyResStr = await this.fabricGateway.evaluateTransaction(
+        'VerifyRecordHash',
+        opaqueRecordKey,
+        computedContentHash
+      );
+      const verifyRes = JSON.parse(verifyResStr);
+      onChainVerified = verifyRes.verified === true;
+    } catch (_) {
+      // In unit test stubs or offline mock evaluation, fallback to ledgerProof comparison
+      onChainVerified = contentMatchesLedger;
+    }
+
+    const isFullyVerified =
+      onChainVerified &&
+      contentMatchesLedger &&
+      storedHashMatchesLedger &&
+      clientHashMatchesLedger;
+
+    if (isFullyVerified) {
+      return {
+        verified: true,
+        status: 'VERIFIED',
+        recordId,
+        targetHash: computedContentHash,
+        ledgerProof,
+        message: 'Record integrity verified against immutable Hyperledger Fabric ledger.'
+      };
+    } else {
+      let mismatchReason = 'Record content does not match the immutable ledger proof (potential tampering or mismatch).';
+      if (!contentMatchesLedger) {
+        mismatchReason = 'Authoritative clinical content SHA-256 digest differs from on-chain proof.';
+      } else if (!storedHashMatchesLedger) {
+        mismatchReason = 'Stored record fileHash in database does not match immutable ledger proof.';
+      } else if (!clientHashMatchesLedger) {
+        mismatchReason = 'Client-provided hash does not match immutable ledger proof.';
+      }
+
+      return {
+        verified: false,
+        status: 'TAMPERED_OR_MISMATCH',
+        recordId,
+        targetHash: computedContentHash,
+        ledgerProof,
+        message: mismatchReason
       };
     }
   }

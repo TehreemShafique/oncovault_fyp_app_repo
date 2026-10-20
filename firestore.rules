@@ -194,7 +194,6 @@ service cloud.firestore {
 
         allow update: if isAuthenticated() &&
           !isTerminalStatus(resource.data.status) &&
-          !request.resource.data.status.matches('(?i)^(confirmed|approved)$') &&
           request.resource.data.id == resource.data.id &&
           request.resource.data.patientId == resource.data.patientId &&
           request.resource.data.doctorId == resource.data.doctorId &&
@@ -202,6 +201,14 @@ service cloud.firestore {
           existsAfter(/databases/$(database)/documents/appointments/$(appointmentId)) &&
           getAfter(/databases/$(database)/documents/appointments/$(appointmentId)).data.status == request.resource.data.status &&
           (
+            // Approval (Doctor only)
+            (
+              isOwner(resource.data.doctorId) && isDoctor() &&
+              resource.data.status.matches('(?i)^(scheduled|pending|rescheduled)$') &&
+              request.resource.data.status == 'confirmed' &&
+              request.resource.data.appointmentDate == resource.data.appointmentDate &&
+              request.resource.data.timeSlot == resource.data.timeSlot
+            ) ||
             // Cancellation (Patient or Doctor)
             (
               ((isOwner(patientId) && isPatient()) || (isOwner(resource.data.doctorId) && isDoctor())) &&
@@ -417,8 +424,18 @@ service cloud.firestore {
     // =========================================================================
     match /bookedSlots/{doctorId}/slots/{slotKey} {
       allow read: if isAuthenticated();
-      // Exclusive locks are written strictly by trusted Cloud Function via Admin SDK
-      allow create, update: if false;
+      // Exclusive locks are created on appointment confirmation by the assigned doctor
+      allow create: if isAuthenticated() &&
+        isOwner(doctorId) && isDoctor() &&
+        request.resource.data.appointmentId is string &&
+        request.resource.data.patientId is string &&
+        request.resource.data.date is timestamp &&
+        request.resource.data.timeSlot is string &&
+        exists(/databases/$(database)/documents/appointments/$(request.resource.data.appointmentId)) &&
+        getAfter(/databases/$(database)/documents/appointments/$(request.resource.data.appointmentId)).data.status.matches('(?i)^(confirmed|approved)$') &&
+        getAfter(/databases/$(database)/documents/appointments/$(request.resource.data.appointmentId)).data.doctorId == doctorId &&
+        getAfter(/databases/$(database)/documents/appointments/$(request.resource.data.appointmentId)).data.patientId == request.resource.data.patientId;
+      allow update: if false;
 
       // Deletion is coupled strictly with verified appointment cancellation or rescheduling
       allow delete: if isAuthenticated() &&
@@ -534,7 +551,6 @@ service cloud.firestore {
 
       allow update: if isAuthenticated() &&
         !isTerminalStatus(resource.data.status) &&
-        !request.resource.data.status.matches('(?i)^(confirmed|approved)$') &&
         request.resource.data.id == resource.data.id &&
         request.resource.data.patientId == resource.data.patientId &&
         request.resource.data.doctorId == resource.data.doctorId &&
@@ -542,6 +558,14 @@ service cloud.firestore {
         existsAfter(/databases/$(database)/documents/patients/$(resource.data.patientId)/appointments/$(appointmentId)) &&
         getAfter(/databases/$(database)/documents/patients/$(resource.data.patientId)/appointments/$(appointmentId)).data.status == request.resource.data.status &&
         (
+          // Approval (Doctor only)
+          (
+            isOwner(resource.data.doctorId) && isDoctor() &&
+            resource.data.status.matches('(?i)^(scheduled|pending|rescheduled)$') &&
+            request.resource.data.status == 'confirmed' &&
+            request.resource.data.appointmentDate == resource.data.appointmentDate &&
+            request.resource.data.timeSlot == resource.data.timeSlot
+          ) ||
           // Cancellation (Patient or Doctor)
           (
             ((isOwner(resource.data.patientId) && isPatient()) || (isOwner(resource.data.doctorId) && isDoctor())) &&

@@ -86,9 +86,9 @@ class DoctorService {
   FirebaseFunctions get _functions {
     if (_customFunctions != null) return _customFunctions!;
     try {
-      return FirebaseFunctions.instance;
-    } catch (_) {
       return FirebaseFunctions.instanceFor(region: 'us-central1');
+    } catch (_) {
+      return FirebaseFunctions.instance;
     }
   }
 
@@ -236,6 +236,19 @@ class DoctorService {
             return list;
           });
 
+  /// Fetches an authoritative appointment document by ID for state verification and refresh.
+  Future<AppointmentModel?> getAppointment(String appointmentId) async {
+    final trimmed = appointmentId.trim();
+    if (trimmed.isEmpty) return null;
+    try {
+      final snap = await _appointments.doc(trimmed).get();
+      if (!snap.exists || snap.data() == null) return null;
+      return AppointmentModel.fromMap(snap.data() as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Pure eligibility check for appointment approval:
   /// Allows canonical 'scheduled' and legacy 'pending', case-insensitively and trimmed.
   /// Rejects null, empty, whitespace-only, unrecognized, and all non-scheduled statuses.
@@ -307,47 +320,316 @@ class DoctorService {
     }
   }
 
-  // ── FEATURE 1: Approve → write bookedSlot ────────────────────
-  // When the doctor approves, the slot is atomically reserved and the
-  // appointment confirmed inside an atomic Firestore transaction.
   Future<void> approveAppointment(AppointmentModel appt) async {
+    final trimmedApptId = appt.id.trim();
+    final trimmedDoctorId = appt.doctorId.trim();
+    final trimmedPatientId = appt.patientId.trim();
+
     // 1. Fail-closed authentication check
     final auth = _safeAuth;
     final currentUserId = auth?.currentUser?.uid;
     if (auth == null || currentUserId == null || currentUserId.trim().isEmpty) {
       throw AppointmentUnauthorizedException(
         'Doctor approval requires an authenticated session.',
-        appointmentId: appt.id,
+        appointmentId: trimmedApptId,
       );
     }
 
-    if (appt.doctorId.trim().isEmpty || currentUserId != appt.doctorId) {
+    if (trimmedDoctorId.isEmpty || currentUserId != trimmedDoctorId) {
       throw AppointmentUnauthorizedException(
         'Authenticated doctor UID does not match the appointment doctor ID.',
-        appointmentId: appt.id,
+        appointmentId: trimmedApptId,
       );
     }
 
-    // 2. Invoke trusted Cloud Function callable
-    try {
-      if (_customApproveCallable != null) {
+    // 2. Payload validation
+    if (trimmedApptId.isEmpty || trimmedPatientId.isEmpty) {
+      final field = trimmedApptId.isEmpty ? 'id' : 'patientId';
+      final actual = trimmedApptId.isEmpty ? appt.id : appt.patientId;
+      throw AppointmentPayloadConflictException(
+        'Appointment approval requires non-empty $field.',
+        appointmentId: trimmedApptId,
+        field: field,
+        expectedValue: 'non-empty string',
+        actualValue: actual,
+      );
+    }
+
+    // Support test mock override if provided
+    if (_customApproveCallable != null) {
+      try {
         await _customApproveCallable!(appointmentId: appt.id);
-      } else {
-        final callable = _functions.httpsCallable('approveAppointment');
-        await callable.call<Map<String, dynamic>>({
-          'appointmentId': appt.id,
+        return;
+      } on FirebaseFunctionsException catch (e) {
+        _mapFunctionsException(e, appt);
+      } catch (e) {
+        if (e is AppointmentException) rethrow;
+        throw AppointmentNetworkException(
+          'Server approval failed: $e',
+          appointmentId: appt.id,
+          currentStatus: appt.status.firestoreValue,
+          requiredStatus: 'scheduled',
+        );
+      }
+    }
+
+    final apptRef = _appointments.doc(trimmedApptId);
+    String? verifiedPatientId;
+    DateTime? verifiedAppointmentDate;
+    String? verifiedTimeSlot;
+    String? verifiedDoctorName;
+
+    // 3. Atomic direct-Firestore transaction
+    await _db.runTransaction((tx) async {
+      // ── PHASE 1: ALL READS MUST PRECEDE ALL WRITES ──
+
+      // A. Read authoritative global appointment
+      final apptSnap = await tx.get(apptRef);
+      if (!apptSnap.exists) {
+        throw AppointmentNotFoundException(
+          'Appointment document $trimmedApptId not found in Firestore.',
+          appointmentId: trimmedApptId,
+        );
+      }
+
+      final apptData = apptSnap.data() as Map<String, dynamic>;
+      final rawStatus = apptData['status']?.toString();
+
+      if (rawStatus == null || rawStatus.trim().isEmpty) {
+        throw AppointmentStateConflictException(
+          'Appointment document $trimmedApptId status is missing or empty, cannot be approved.',
+          appointmentId: trimmedApptId,
+          currentStatus: rawStatus?.trim() ?? '',
+          requiredStatus: 'eligible (scheduled, pending, or rescheduled)',
+        );
+      }
+
+      final canon = canonicalStatus(rawStatus);
+      if (canon == 'confirmed') {
+        throw AppointmentStateConflictException(
+          'Appointment $trimmedApptId is already confirmed.',
+          appointmentId: trimmedApptId,
+          currentStatus: 'confirmed',
+          requiredStatus: 'scheduled',
+        );
+      }
+
+      if (canon == 'completed' || canon == 'rejected' || canon == 'cancelled') {
+        throw AppointmentStateConflictException(
+          'Appointment $trimmedApptId is in terminal status "$rawStatus", cannot be confirmed.',
+          appointmentId: trimmedApptId,
+          currentStatus: rawStatus.trim(),
+          requiredStatus: 'scheduled',
+        );
+      }
+
+      if (canon != 'scheduled' && canon != 'rescheduled') {
+        throw AppointmentStateConflictException(
+          'Appointment $trimmedApptId in status "$rawStatus" is not eligible for approval.',
+          appointmentId: trimmedApptId,
+          currentStatus: rawStatus.trim(),
+          requiredStatus: 'scheduled',
+        );
+      }
+
+      final serverDoctorId = apptData['doctorId']?.toString().trim() ?? '';
+      if (serverDoctorId.isEmpty || serverDoctorId != currentUserId) {
+        throw AppointmentUnauthorizedException(
+          'Server record doctorId ($serverDoctorId) does not match authenticated doctor ($currentUserId).',
+          appointmentId: trimmedApptId,
+        );
+      }
+
+      final serverPatientId = apptData['patientId']?.toString().trim() ?? '';
+      if (serverPatientId.isEmpty || serverPatientId != trimmedPatientId) {
+        throw AppointmentPayloadConflictException(
+          'Appointment patientId ($serverPatientId) does not match caller parameter ($trimmedPatientId).',
+          appointmentId: trimmedApptId,
+          field: 'patientId',
+          expectedValue: serverPatientId,
+          actualValue: trimmedPatientId,
+        );
+      }
+
+      final rawServerDate = apptData['appointmentDate'];
+      if (rawServerDate == null || rawServerDate is! Timestamp) {
+        throw AppointmentPayloadConflictException(
+          'Authoritative appointment date is missing or invalid in document $trimmedApptId.',
+          appointmentId: trimmedApptId,
+          field: 'appointmentDate',
+          expectedValue: 'valid Timestamp',
+          actualValue: rawServerDate.toString(),
+        );
+      }
+      final serverAppointmentDate = rawServerDate.toDate();
+      final serverDateOnly = DateTime(serverAppointmentDate.year,
+          serverAppointmentDate.month, serverAppointmentDate.day);
+
+      final serverTimeSlot = apptData['timeSlot']?.toString().trim() ?? '';
+      if (serverTimeSlot.isEmpty) {
+        throw AppointmentPayloadConflictException(
+          'Authoritative appointment timeSlot is missing or empty in document $trimmedApptId.',
+          appointmentId: trimmedApptId,
+          field: 'timeSlot',
+          expectedValue: 'non-empty timeSlot',
+          actualValue: '',
+        );
+      }
+
+      // B. Read patient mirror document
+      final patientApptRef = _patientAppts(serverPatientId).doc(trimmedApptId);
+      final patientApptSnap = await tx.get(patientApptRef);
+      if (!patientApptSnap.exists) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror does not exist at /patients/$serverPatientId/appointments/$trimmedApptId.',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror document does not exist',
+        );
+      }
+
+      final patientData = patientApptSnap.data() as Map<String, dynamic>;
+      final mirrorDoctorId = patientData['doctorId']?.toString().trim() ?? '';
+      final mirrorPatientId =
+          patientData['patientId']?.toString().trim() ?? '';
+      final mirrorRawStatus = patientData['status']?.toString();
+
+      if (mirrorDoctorId != serverDoctorId ||
+          mirrorPatientId != serverPatientId) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror contains mismatched identity fields.',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror identity fields mismatch global record',
+        );
+      }
+
+      final mirrorCanon = canonicalStatus(mirrorRawStatus);
+      if (mirrorCanon != canon) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror status ($mirrorRawStatus) does not match global status ($rawStatus).',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror status does not match canonical global status',
+        );
+      }
+
+      final rawMirrorDate = patientData['appointmentDate'];
+      if (rawMirrorDate == null || rawMirrorDate is! Timestamp) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror missing or invalid appointmentDate.',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror appointmentDate is missing or invalid',
+        );
+      }
+      final mirrorDateOnly = DateTime(rawMirrorDate.toDate().year,
+          rawMirrorDate.toDate().month, rawMirrorDate.toDate().day);
+      if (mirrorDateOnly != serverDateOnly) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror date conflicts with authoritative date.',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror appointment date mismatch',
+        );
+      }
+
+      final mirrorTimeSlot =
+          patientData['timeSlot']?.toString().trim() ?? '';
+      if (mirrorTimeSlot != serverTimeSlot) {
+        throw AppointmentMirrorInconsistentException(
+          'Patient appointment mirror timeSlot ($mirrorTimeSlot) conflicts with authoritative timeSlot ($serverTimeSlot).',
+          appointmentId: trimmedApptId,
+          patientId: serverPatientId,
+          reason: 'Mirror timeSlot mismatch',
+        );
+      }
+
+      // C. Derive canonical slotKey and verify/reserve slot lock
+      final authoritativeSlotKey =
+          buildSlotKey(serverAppointmentDate, serverTimeSlot);
+      final slotRef =
+          _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
+
+      final slotSnap = await tx.get(slotRef);
+      bool shouldWriteSlotLock = true;
+
+      if (slotSnap.exists) {
+        final slotData = slotSnap.data() as Map<String, dynamic>? ?? {};
+        final existingApptId =
+            slotData['appointmentId']?.toString().trim() ?? '';
+        final existingPatientId =
+            slotData['patientId']?.toString().trim() ?? '';
+
+        if (existingApptId.isEmpty || existingPatientId.isEmpty) {
+          throw SlotLockCorruptException(
+            'Slot lock $authoritativeSlotKey contains missing or empty ownership information.',
+            slotKey: authoritativeSlotKey,
+          );
+        }
+
+        if (existingApptId != trimmedApptId) {
+          throw SlotAlreadyBookedException(
+            'Slot $authoritativeSlotKey is already booked by appointment $existingApptId.',
+            slotKey: authoritativeSlotKey,
+            conflictingAppointmentId: existingApptId,
+          );
+        }
+
+        if (existingPatientId != serverPatientId) {
+          throw SlotLockCorruptException(
+            'Slot lock $authoritativeSlotKey patient ID conflicts with authoritative appointment.',
+            slotKey: authoritativeSlotKey,
+          );
+        }
+
+        // Already locked for this appointment
+        shouldWriteSlotLock = false;
+      }
+
+      verifiedPatientId = serverPatientId;
+      verifiedAppointmentDate = serverAppointmentDate;
+      verifiedTimeSlot = serverTimeSlot;
+      verifiedDoctorName = (apptData['doctorName'] ?? appt.doctorName).toString();
+
+      // ── PHASE 2: ATOMIC WRITES ──
+      final nowTimestamp = FieldValue.serverTimestamp();
+      final updateData = {
+        'status': AppointmentStatus.confirmed.firestoreValue,
+        'slotKey': authoritativeSlotKey,
+        'updatedAt': nowTimestamp,
+      };
+
+      tx.update(apptRef, updateData);
+      tx.update(patientApptRef, updateData);
+
+      if (shouldWriteSlotLock) {
+        tx.set(slotRef, {
+          'appointmentId': trimmedApptId,
+          'patientId': serverPatientId,
+          'patientName': apptData['patientName'] ?? appt.patientName,
+          'date': rawServerDate,
+          'timeSlot': serverTimeSlot,
+          'bookedAt': nowTimestamp,
         });
       }
-    } on FirebaseFunctionsException catch (e) {
-      _mapFunctionsException(e, appt);
-    } catch (e) {
-      if (e is AppointmentException) rethrow;
-      throw AppointmentStateConflictException(
-        'Server approval failed: $e',
-        appointmentId: appt.id,
-        currentStatus: appt.status.firestoreValue,
-        requiredStatus: 'scheduled',
+    });
+
+    // 4. Post-transaction Notification: strictly executed outside transaction callback.
+    // Notification failure must NEVER fail the confirmed appointment.
+    try {
+      await _sendPatientNotification(
+        patientId: verifiedPatientId ?? trimmedPatientId,
+        title: 'Appointment Approved ✓',
+        body: 'Your appointment with ${verifiedDoctorName ?? appt.doctorName} on '
+            '${_fmt(verifiedAppointmentDate ?? appt.appointmentDate)} at ${verifiedTimeSlot ?? appt.timeSlot} '
+            'has been approved.',
+        type: 'appointment',
+        referenceId: trimmedApptId,
       );
+    } catch (_) {
+      // Non-blocking background notification failure is safely caught so that
+      // the confirmed appointment is not reported as failed to the caller.
     }
   }
 
@@ -399,6 +681,20 @@ class DoctorService {
           field: 'appointmentId',
           expectedValue: appt.id,
           actualValue: '',
+        );
+      case 'unavailable':
+      case 'internal':
+        final isLikelyCORSOrMissing = msg.contains('internal') ||
+            msg.contains('CORS') ||
+            msg.contains('network') ||
+            msg.contains('Failed to fetch') ||
+            msg.trim() == 'internal';
+        throw AppointmentNetworkException(
+          isLikelyCORSOrMissing
+              ? 'Server approval endpoint unreachable. The Cloud Function may not be deployed or accessible from this origin.'
+              : msg,
+          appointmentId: appt.id,
+          originalCode: e.code,
         );
       default:
         throw AppointmentStateConflictException(
@@ -1521,7 +1817,7 @@ class DoctorService {
       cancerType: entry.cancerType,
       stage: entry.stage,
       status: entry.status,
-      blockchainVerified: true,
+      blockchainVerified: entry.blockchainVerified,
       createdAt: entry.createdAt,
     );
 

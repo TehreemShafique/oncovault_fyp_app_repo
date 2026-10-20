@@ -9,6 +9,8 @@ import '../../services/doctor_service.dart';
 import '../../services/nurse_service.dart';
 import '../../models/vital_sign_model.dart';
 import '../../models/clinical_note_model.dart';
+import '../../services/fabric_gateway_service.dart';
+import '../patient/report_viewer_screen.dart';
 import 'doctor_widgets.dart';
 import 'add_diagnosis_screen.dart';
 
@@ -197,7 +199,9 @@ class _HistoryTimelineCard extends StatelessWidget {
                 Text('By ${entry.doctorName}', style: GoogleFonts.inter(
                     fontSize: 10, color: OV.outline, fontWeight: FontWeight.w500)),
                 const Spacer(),
-                if (entry.blockchainVerified) const BlockchainBadge(),
+                const BlockchainBadge(
+                  status: FabricVerificationStatus.notAnchored,
+                ),
               ]),
             ])))),
   ]));
@@ -227,35 +231,61 @@ class _RecordsTab extends StatelessWidget {
 class _RecordCard extends StatelessWidget {
   final MedicalRecordModel record;
   const _RecordCard({required this.record});
+
+  FabricVerificationStatus get _status {
+    if (record.fabricTxId == null || record.fabricTxId!.isEmpty) {
+      return FabricVerificationStatus.notAnchored;
+    }
+    // The record has an on-chain Fabric proof, but current content has not yet been
+    // freshly verified against the ledger on this view. Show neutral 'Check Integrity'
+    // until verified in ReportViewerScreen. Never assume green without fresh verification.
+    return FabricVerificationStatus.pending;
+  }
+
   @override
-  Widget build(BuildContext context) => Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(width: 42, height: 42, decoration: BoxDecoration(
-              color: OV.secondaryContainer, borderRadius: BorderRadius.circular(12)),
-              child: Icon(Icons.description_outlined, color: OV.secondary, size: 20)),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(record.title, style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700, color: OV.onSurface)),
-            Text('${record.facility} · ${DateFormat('MMM d, yyyy').format(record.date)}',
-                style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
-          ])),
-          if (record.subtype.isNotEmpty)
-            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: OV.primaryContainer, borderRadius: BorderRadius.circular(100)),
-                child: Text(record.subtype, style: GoogleFonts.inter(
-                    fontSize: 10, fontWeight: FontWeight.w700, color: OV.primary))),
-        ]),
-        if (record.summary.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(record.summary, style: GoogleFonts.inter(
-              fontSize: 12, color: OV.onSurfaceVariant, height: 1.4)),
-        ],
-      ]));
+  Widget build(BuildContext context) => GestureDetector(
+      onTap: () => Navigator.push(context, dSlide(ReportViewerScreen(record: record))),
+      child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(width: 42, height: 42, decoration: BoxDecoration(
+                  color: OV.secondaryContainer, borderRadius: BorderRadius.circular(12)),
+                  child: Icon(Icons.description_outlined, color: OV.secondary, size: 20)),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(record.title, style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w700, color: OV.onSurface)),
+                Text('${record.facility} · ${DateFormat('MMM d, yyyy').format(record.date)}',
+                    style: GoogleFonts.inter(fontSize: 11, color: OV.onSurfaceVariant)),
+              ])),
+              if (record.subtype.isNotEmpty)
+                Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: OV.primaryContainer, borderRadius: BorderRadius.circular(100)),
+                    child: Text(record.subtype, style: GoogleFonts.inter(
+                        fontSize: 10, fontWeight: FontWeight.w700, color: OV.primary))),
+            ]),
+            if (record.summary.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(record.summary, style: GoogleFonts.inter(
+                  fontSize: 12, color: OV.onSurfaceVariant, height: 1.4)),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                BlockchainBadge(status: _status),
+                Row(children: [
+                  Text('Inspect Ledger',
+                      style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: OV.primary)),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right_rounded, size: 14, color: OV.primary),
+                ]),
+              ],
+            ),
+          ])));
 }
 
 // ── Labs Tab ──────────────────────────────────────────────────────────────────

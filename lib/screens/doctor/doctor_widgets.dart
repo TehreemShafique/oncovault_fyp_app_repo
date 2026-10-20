@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_theme.dart';
 import '../../models/appointment_model.dart';
+import '../../services/fabric_gateway_service.dart';
 
 // ── Status Badge ──────────────────────────────────────────────────────────────
 class DStatusBadge extends StatelessWidget {
@@ -174,20 +175,96 @@ class IconBubble extends StatelessWidget {
 
 // ── Blockchain Verified Badge ─────────────────────────────────────────────────
 class BlockchainBadge extends StatelessWidget {
-  const BlockchainBadge({super.key});
+  final FabricVerificationStatus status;
+  final VoidCallback? onTap;
+
+  const BlockchainBadge({
+    super.key,
+    this.status = FabricVerificationStatus.verified,
+    this.onTap,
+  });
+
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    Color bg;
+    Color border;
+    Color fg;
+    IconData icon;
+    String label;
+
+    switch (status) {
+      case FabricVerificationStatus.verified:
+        bg = const Color(0xFFF0FDF4);
+        border = const Color(0xFF86EFAC);
+        fg = const Color(0xFF16A34A);
+        icon = Icons.verified_rounded;
+        label = 'Blockchain Verified';
+        break;
+      case FabricVerificationStatus.tamperedOrMismatch:
+        bg = const Color(0xFFFEF2F2);
+        border = const Color(0xFFFCA5A5);
+        fg = const Color(0xFFDC2626);
+        icon = Icons.gpp_bad_rounded;
+        label = 'Integrity Mismatch — Requires Review';
+        break;
+      case FabricVerificationStatus.notAnchored:
+        bg = const Color(0xFFFFFBEB);
+        border = const Color(0xFFFDE68A);
+        fg = const Color(0xFFD97706);
+        icon = Icons.help_outline_rounded;
+        label = 'Not Yet Anchored';
+        break;
+      case FabricVerificationStatus.pending:
+        bg = const Color(0xFFF1F5F9);
+        border = const Color(0xFF94A3B8);
+        fg = const Color(0xFF475569);
+        icon = Icons.verified_user_outlined;
+        label = 'Check Integrity';
+        break;
+      case FabricVerificationStatus.verificationUnavailable:
+        bg = const Color(0xFFF8FAFC);
+        border = const Color(0xFFE2E8F0);
+        fg = const Color(0xFF94A3B8);
+        icon = Icons.cloud_off_rounded;
+        label = 'Cannot Verify Right Now';
+        break;
+    }
+
+    final badge = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-          color: OV.tertiaryContainer.withOpacity(0.6),
-          borderRadius: BorderRadius.circular(100),
-          border: Border.all(color: OV.tertiary.withOpacity(0.3))),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.verified_rounded, size: 13, color: OV.tertiary),
-        const SizedBox(width: 5),
-        Text('Blockchain Verified',
-            style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: OV.tertiary)),
-      ]));
+        color: bg,
+        borderRadius: BorderRadius.circular(100),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: fg),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: fg,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap != null) {
+      return GestureDetector(
+        onTap: onTap,
+        child: badge,
+      );
+    }
+    return badge;
+  }
 }
 
 // ── Section Header ────────────────────────────────────────────────────────────

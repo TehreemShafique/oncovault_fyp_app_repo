@@ -27,7 +27,13 @@ class ApiConfig {
 
     try {
       if (Platform.isAndroid) {
-        // Default Android Emulator loopback alias
+        // Physical phone with ADB reverse or emulator mode uses 127.0.0.1 loopback
+        const bool useAdbReverse = bool.fromEnvironment('USE_ADB_REVERSE', defaultValue: true);
+        const bool useEmulators = bool.fromEnvironment('USE_FIREBASE_EMULATORS', defaultValue: false);
+        if (useAdbReverse || useEmulators) {
+          return 'http://127.0.0.1:8000';
+        }
+        // Legacy fallback for Android virtual emulator loopback alias
         return 'http://10.0.2.2:8000';
       } else if (Platform.isIOS || Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
         return 'http://127.0.0.1:8000';

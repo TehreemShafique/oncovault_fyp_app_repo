@@ -54,17 +54,24 @@ export class FirebaseAdminService {
         });
       } else {
         // Safe check: do not invent credentials.
-        // If GOOGLE_APPLICATION_CREDENTIALS exists in environment, attempt default init
-        if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
+        // Attempt Application Default Credentials (ADC) from environment or standard credential stores
+        try {
           this.app = admin.initializeApp({
             credential: admin.credential.applicationDefault(),
             projectId,
             storageBucket
           });
-        } else {
-          // Unconfigured live mode: gracefully mark unconfigured
-          this.configured = false;
-          return;
+        } catch {
+          // If no ADC available, attempt project-only init (for token verification against public keys)
+          try {
+            this.app = admin.initializeApp({
+              projectId,
+              storageBucket
+            });
+          } catch {
+            this.configured = false;
+            return;
+          }
         }
       }
 

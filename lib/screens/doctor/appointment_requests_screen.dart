@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../models/appointment_model.dart';
 import '../../services/doctor_service.dart';
+import '../../services/appointment_exceptions.dart';
 import 'doctor_widgets.dart';
 import 'appointment_detail_doctor_screen.dart';
 
@@ -67,7 +68,6 @@ class _AppointmentRequestsScreenState extends State<AppointmentRequestsScreen>
                   return const Center(child: CircularProgressIndicator(color: OV.primary));
                 }
                 final all = snap.data ?? [];
-                final now = DateTime.now();
                 // Pending stays in Pending tab regardless of date
                 final pending  = all.where((a) => a.status == AppointmentStatus.scheduled).toList();
                 // Upcoming = confirmed/rescheduled (status-based, not date-based)
@@ -133,19 +133,59 @@ class _ApptRequestCardState extends State<_ApptRequestCard> {
   bool _loading = false;
 
   Future<void> _approve() async {
+    if (_loading) return;
     setState(() => _loading = true);
-    await widget.service.approveAppointment(widget.appt);
-    if (mounted) setState(() => _loading = false);
-    if (mounted) _snack('Appointment approved ✓', OV.tertiary);
+
+    try {
+      await widget.service.approveAppointment(widget.appt);
+      if (!mounted) return;
+      _snack('Appointment approved ✓', OV.tertiary);
+    } catch (e) {
+      // Re-read appointment after ambiguous network outcomes before offering retry
+      try {
+        final currentAppt = await widget.service.getAppointment(widget.appt.id);
+        if (currentAppt != null && currentAppt.status == AppointmentStatus.confirmed) {
+          if (!mounted) return;
+          _snack('Appointment was confirmed on the server ✓', OV.tertiary);
+          return;
+        }
+      } catch (_) {
+        // Ignore read error and report the approval error
+      }
+
+      if (!mounted) return;
+      final errorMsg = e is AppointmentException
+          ? e.message
+          : 'Approval failed: ${e.toString()}';
+      _snack(errorMsg, OV.error);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   Future<void> _reject() async {
+    if (_loading) return;
     final reason = await _showRejectDialog();
     if (reason == null) return;
     setState(() => _loading = true);
-    await widget.service.rejectAppointment(widget.appt, reason: reason);
-    if (mounted) setState(() => _loading = false);
-    if (mounted) _snack('Appointment rejected', OV.error);
+
+    try {
+      await widget.service.rejectAppointment(widget.appt, reason: reason);
+      if (!mounted) return;
+      _snack('Appointment rejected', OV.error);
+    } catch (e) {
+      if (!mounted) return;
+      final errorMsg = e is AppointmentException
+          ? e.message
+          : 'Rejection failed: ${e.toString()}';
+      _snack(errorMsg, OV.error);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   void _snack(String msg, Color color) {

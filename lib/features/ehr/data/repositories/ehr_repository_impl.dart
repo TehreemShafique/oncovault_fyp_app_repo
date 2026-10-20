@@ -114,29 +114,41 @@ class EhrRepositoryImpl {
   // ── Verify integrity ──────────────────────────────────────────
   Future<IntegrityResult> verifyIntegrity(
       MedicalRecordModel record) async {
-    if (record.fileHash.isEmpty) {
-      return const IntegrityResult(status: IntegrityStatus.unverified);
-    }
-    // 1. Verify against real Fabric ledger via Gateway
+    // 1. Authoritative verification against real Fabric ledger via Gateway
     try {
       final fabricRes = await _fabricGateway.verifyRecord(
         recordId: record.id,
         patientId: record.patientId,
-        expectedSha256: record.fileHash,
+        expectedSha256: record.fileHash.isNotEmpty ? record.fileHash : null,
       );
       if (fabricRes.status == FabricVerificationStatus.verified) {
-        return const IntegrityResult(status: IntegrityStatus.verified);
+        return IntegrityResult(
+          status: IntegrityStatus.verified,
+          storedHash: record.fileHash,
+          computedHash: fabricRes.targetHash,
+        );
       } else if (fabricRes.status == FabricVerificationStatus.tamperedOrMismatch) {
-        return const IntegrityResult(status: IntegrityStatus.tampered);
+        return IntegrityResult(
+          status: IntegrityStatus.tampered,
+          storedHash: record.fileHash,
+          computedHash: fabricRes.targetHash,
+          errorMessage: fabricRes.message,
+        );
+      } else if (fabricRes.status == FabricVerificationStatus.notAnchored) {
+        return const IntegrityResult(status: IntegrityStatus.unverified);
       }
     } catch (_) {
       // Fall back to local byte comparison if gateway is offline
     }
 
-    return await _comparator.verifyRemoteFile(
-      fileUrl    : record.fileUrl,
-      storedHash : record.fileHash,
-    );
+    if (record.fileUrl.isNotEmpty && record.fileHash.isNotEmpty) {
+      return await _comparator.verifyRemoteFile(
+        fileUrl    : record.fileUrl,
+        storedHash : record.fileHash,
+      );
+    }
+
+    return const IntegrityResult(status: IntegrityStatus.unverified);
   }
 
   // ── Fetch patient profile ─────────────────────────────────────
