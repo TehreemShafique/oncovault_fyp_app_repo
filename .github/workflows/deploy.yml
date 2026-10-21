@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - 60percent
+      - 60percent-update
       - dev
       - feature/ci-cd-pipeline
   # Allows triggering the deployment manually with 1-click from the GitHub Actions tab
