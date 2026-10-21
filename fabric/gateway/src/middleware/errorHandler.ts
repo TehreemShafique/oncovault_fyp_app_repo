@@ -13,7 +13,13 @@ export function errorHandler(
   let statusCode = 500;
   let code: string = ERROR_CODES.INTERNAL_ERROR;
 
-  if (message.includes('Unauthenticated') || message.includes('token') || message.includes('Bearer')) {
+  if (message.startsWith('CONSENT_PENDING:')) {
+    statusCode = 409;
+    code = 'CONSENT_PENDING';
+  } else if (message.startsWith('CONSENT_REJECTED:')) {
+    statusCode = 422;
+    code = 'CONSENT_REJECTED';
+  } else if (message.includes('Unauthenticated') || message.includes('token') || message.includes('Bearer')) {
     statusCode = 401;
     code = ERROR_CODES.UNAUTHENTICATED;
   } else if (message.includes('Access Denied') || message.includes('Unauthorized') || message.includes('Forbidden')) {

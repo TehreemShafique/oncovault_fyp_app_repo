@@ -22,6 +22,7 @@ export interface AppConfig {
 
   pseudonymHmacSecret: string;
   enableLiveConsentMutations: boolean;
+  enableBackgroundAnchoring: boolean;
 
   firebase: {
     projectId: string;
@@ -59,6 +60,7 @@ export const config: AppConfig = {
 
   pseudonymHmacSecret: process.env.PSEUDONYM_HMAC_SECRET || 'oncovault_default_local_hmac_secret_for_domain_sep_32_bytes!',
   enableLiveConsentMutations: process.env.ENABLE_LIVE_CONSENT_MUTATIONS === 'true',
+  enableBackgroundAnchoring: process.env.ENABLE_BACKGROUND_ANCHORING !== 'false',
 
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || 'oncovault-8cbbc',

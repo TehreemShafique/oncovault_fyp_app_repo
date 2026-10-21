@@ -3,7 +3,9 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { config } from '../../src/config/env';
 import { ConsentService } from '../../src/services/consentService';
+import { FirebaseAdminService } from '../../src/services/firebaseAdmin';
 import { AuthenticatedUser } from '../../src/types';
+import { PseudonymService } from '../../src/services/pseudonymService';
 
 describe('ConsentService Unit Tests', () => {
   let consentService: ConsentService;
@@ -28,10 +30,14 @@ describe('ConsentService Unit Tests', () => {
   beforeEach(() => {
     mockFabricGateway = {
       evaluateTransaction: sinon.stub(),
-      submitTransaction: sinon.stub()
+      submitTransaction: sinon.stub(),
+      submitConsentTransaction: sinon.stub()
     };
 
     mockReconciliation = {
+      claimConsentOperation: sinon.stub().callsFake(async (operation: any) => ({ operation, claimed: true })),
+      updateConsentOperation: sinon.stub().callsFake(async (operation: any, changes: any) => ({ ...operation, ...changes })),
+      projectConsentOperation: sinon.stub().callsFake(async (operation: any) => ({ ...operation, projectionPending: false })),
       acquireLock: sinon.stub().returns(true),
       releaseLock: sinon.stub(),
       startOperation: sinon.stub().resolves({}),
@@ -39,7 +45,22 @@ describe('ConsentService Unit Tests', () => {
       markStatus: sinon.stub().resolves({})
     };
 
-    consentService = new ConsentService(mockFabricGateway, mockReconciliation);
+    const mockFirestore = {
+      collection: sinon.stub().returns({
+        doc: sinon.stub().returns({
+          set: sinon.stub().resolves({}),
+          get: sinon.stub().callsFake(async () => ({ exists: true, data: () => ({ role: 'patient' }) }))
+        })
+      })
+    };
+    mockFirestore.collection.callsFake((name: string) => ({ doc: (id: string) => ({
+      get: async () => ({ exists: true, data: () => ({ role: id === PATIENT_USER.uid ? 'patient' : 'doctor' }) })
+    }) }));
+    const mockFirebaseAdmin = {
+      getFirestoreInstance: sinon.stub().returns(mockFirestore)
+    };
+
+    consentService = new ConsentService(mockFabricGateway, mockReconciliation, mockFirebaseAdmin);
   });
 
   describe('Live Consent Mutation Safety Gate (Phase 2 Requirement)', () => {
@@ -47,7 +68,7 @@ describe('ConsentService Unit Tests', () => {
       config.enableLiveConsentMutations = false;
 
       try {
-        await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, VALID_SCOPE);
+        await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, VALID_SCOPE, 'NEVER', 'fictional-request-key-001');
         expect.fail('Should have blocked live consent mutation');
       } catch (err: any) {
         expect(err.message).to.include('FEATURE_DISABLED');
@@ -79,8 +100,8 @@ describe('ConsentService Unit Tests', () => {
 
     it('should successfully submit patient-authorized consent to chaincode', async () => {
       const mockChaincodeConsent = {
-        patientPseudoId: 'pat_pseudonym_123',
-        providerPseudoId: 'prov_pseudonym_456',
+        patientPseudoId: PseudonymService.generatePatientPseudoId(PATIENT_USER.uid),
+        providerPseudoId: PseudonymService.generateProviderPseudoId(VALID_PROVIDER),
         scope: VALID_SCOPE,
         status: 'GRANTED',
         txId: 'tx-consent-granted-777',
@@ -91,18 +112,19 @@ describe('ConsentService Unit Tests', () => {
         }
       };
 
-      mockFabricGateway.submitTransaction.resolves({
-        result: JSON.stringify(mockChaincodeConsent),
-        txId: 'tx-consent-granted-777'
+      mockFabricGateway.evaluateTransaction.resolves(JSON.stringify({ active: false, status: 'NOT_FOUND' }));
+      mockFabricGateway.submitConsentTransaction.callsFake(async (_name: string, _args: string[], prepared: any) => {
+        await prepared('tx-consent-granted-777');
+        return { result: JSON.stringify(mockChaincodeConsent), txId: 'tx-consent-granted-777' };
       });
 
-      const res = await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, VALID_SCOPE);
+      const res = await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, VALID_SCOPE, 'NEVER', 'fictional-request-key-001');
 
       expect(res.consent.status).to.equal('GRANTED');
       expect(res.patientPseudoId.startsWith('pat_')).to.be.true;
       expect(res.providerPseudoId.startsWith('prov_')).to.be.true;
       // Submitting args to Fabric never contain raw patient UID!
-      const submitArgs = mockFabricGateway.submitTransaction.firstCall.args;
+      const submitArgs = mockFabricGateway.submitConsentTransaction.firstCall.args[1];
       expect(submitArgs).to.not.include(PATIENT_USER.uid);
     });
 
@@ -117,7 +139,7 @@ describe('ConsentService Unit Tests', () => {
 
     it('should reject unapproved consent scope', async () => {
       try {
-        await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, 'UNAPPROVED_CUSTOM_SCOPE');
+        await consentService.grantConsent(PATIENT_USER, VALID_PROVIDER, 'UNAPPROVED_CUSTOM_SCOPE', 'NEVER', 'fictional-request-key-001');
         expect.fail('Should have rejected unapproved scope');
       } catch (err: any) {
         expect(err.message).to.include('Invalid consent scope');
@@ -153,4 +175,55 @@ describe('ConsentService Unit Tests', () => {
       expect(history[1].value.status).to.equal('REVOKED');
     });
   });
+  describe('Read-only consent history response normalization', () => {
+    function emptyHistoryError() {
+      const patient = PseudonymService.generatePatientPseudoId(PATIENT_USER.uid);
+      const provider = PseudonymService.generateProviderPseudoId(VALID_PROVIDER);
+      return Object.assign(new Error('evaluate failed'), {
+        code: 2,
+        details: [{ message: `chaincode response 500, No consent history found for patient '${patient}', provider '${provider}', scope 'DIRECT_CARE'.` }]
+      });
+    }
+
+    it('normalizes the observed peer empty-history response to an empty array', async () => {
+      mockFabricGateway.evaluateTransaction.rejects(emptyHistoryError());
+      const history = await consentService.getConsentHistory(PATIENT_USER, PATIENT_USER.uid, VALID_PROVIDER, 'DIRECT_CARE');
+      expect(history).to.deep.equal([]);
+      expect(mockFabricGateway.evaluateTransaction.firstCall.args[0]).to.equal('GetConsentHistory');
+      expect(mockFabricGateway.submitTransaction.called).to.equal(false);
+    });
+
+    it('preserves an explicit successful empty history result', async () => {
+      mockFabricGateway.evaluateTransaction.resolves('[]');
+      expect(await consentService.getConsentHistory(PATIENT_USER, PATIENT_USER.uid, VALID_PROVIDER, 'DIRECT_CARE')).to.deep.equal([]);
+    });
+
+    for (const variant of ['timeout', 'disabled', 'permission', 'missing-details', 'wrong-key', 'mixed-peer']) {
+      it(`does not convert ${variant} failures into empty history`, async () => {
+        const error = emptyHistoryError();
+        if (variant === 'timeout') error.code = 4;
+        if (variant === 'disabled') error.details[0].message = 'history database is not enabled';
+        if (variant === 'permission') error.details[0].message = 'Access Denied';
+        if (variant === 'missing-details') error.details = [];
+        if (variant === 'wrong-key') error.details[0].message = error.details[0].message.replace('DIRECT_CARE', 'OTHER_SCOPE');
+        if (variant === 'mixed-peer') error.details.push({message: 'peer unavailable'});
+        mockFabricGateway.evaluateTransaction.rejects(error);
+        let caught: unknown;
+        try {
+          await consentService.getConsentHistory(PATIENT_USER, PATIENT_USER.uid, VALID_PROVIDER, 'DIRECT_CARE');
+        } catch (err) { caught = err; }
+        expect(caught).to.equal(error);
+      });
+    }
+
+    it('rejects a malformed successful history payload', async () => {
+      mockFabricGateway.evaluateTransaction.resolves('{}');
+      let caught: any;
+      try {
+        await consentService.getConsentHistory(PATIENT_USER, PATIENT_USER.uid, VALID_PROVIDER, 'DIRECT_CARE');
+      } catch (err) { caught = err; }
+      expect(caught?.message).to.include('Invalid consent history response');
+    });
+  });
+
 });

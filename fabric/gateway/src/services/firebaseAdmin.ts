@@ -232,8 +232,80 @@ export class FirebaseAdminService {
         .doc(recordId)
         .get();
       if (noteDoc.exists) {
-        return { id: noteDoc.id, isClinicalNote: true, ...noteDoc.data() };
+        return { id: noteDoc.id, isClinicalNote: true, documentType: 'CLINICAL_NOTE', ...noteDoc.data() };
       }
+    }
+
+    // 6. Check patient blood_cancer_ehrs subcollection if expectedPatientId provided
+    if (expectedPatientId) {
+      const ehrDoc = await this.firestore
+        .collection('patients')
+        .doc(expectedPatientId)
+        .collection('blood_cancer_ehrs')
+        .doc(recordId)
+        .get();
+      if (ehrDoc.exists) {
+        const ehrData = ehrDoc.data() as any;
+        if (ehrData && ehrData.patientId && ehrData.patientId !== expectedPatientId) {
+          throw new Error(
+            `Access Denied: Blood Cancer EHR '${recordId}' belongs to patient '${ehrData.patientId}', not expected patient '${expectedPatientId}'.`
+          );
+        }
+        return {
+          id: ehrDoc.id,
+          patientId: expectedPatientId,
+          documentType: 'BLOOD_CANCER_EHR',
+          isBloodCancerEhr: true,
+          ...ehrData
+        };
+      }
+    }
+
+    // 7. Check patient diagnoses subcollection if expectedPatientId provided
+    if (expectedPatientId) {
+      const diagDoc = await this.firestore
+        .collection('patients')
+        .doc(expectedPatientId)
+        .collection('diagnoses')
+        .doc(recordId)
+        .get();
+      if (diagDoc.exists) {
+        const diagData = diagDoc.data() as any;
+        if (diagData && diagData.patientId && diagData.patientId !== expectedPatientId) {
+          throw new Error(
+            `Access Denied: Diagnosis '${recordId}' belongs to patient '${diagData.patientId}', not expected patient '${expectedPatientId}'.`
+          );
+        }
+        return {
+          id: diagDoc.id,
+          patientId: expectedPatientId,
+          documentType: 'DIAGNOSIS',
+          isDiagnosis: true,
+          ...diagData
+        };
+      }
+    }
+
+    // 8. Fallback for blood_cancer_ehrs if expectedPatientId not provided
+    if (!expectedPatientId) {
+      try {
+        const ehrCgSnap = await this.firestore
+          .collectionGroup('blood_cancer_ehrs')
+          .where('recordId', '==', recordId)
+          .get();
+        if (!ehrCgSnap.empty) {
+          const doc = ehrCgSnap.docs[0];
+          const data = doc.data() as any;
+          const pid = doc.ref.parent.parent?.id || data.patientId;
+          return {
+            id: doc.id,
+            patientId: pid,
+            documentType: 'BLOOD_CANCER_EHR',
+            isBloodCancerEhr: true,
+            ...data
+          };
+        }
+      } catch (_) {}
     }
 
     return null;
@@ -383,6 +455,53 @@ export class FirebaseAdminService {
         }
       } catch (_) {
         // Non-blocking if clinical_notes subcollection does not exist
+      }
+
+      try {
+        const ehrRef = this.firestore
+          .collection('patients')
+          .doc(patientId)
+          .collection('blood_cancer_ehrs')
+          .doc(recordId);
+        const eSnap = await ehrRef.get();
+        if (eSnap.exists) {
+          const ehrPayload = {
+            ...updatePayload,
+            storedHash: proofData.fileHash,
+            blockchainTxId: proofData.txId
+          };
+          await ehrRef.set(ehrPayload, { merge: true });
+        }
+      } catch (_) {
+        // Non-blocking if blood_cancer_ehrs subcollection does not exist
+      }
+
+      try {
+        const diagRef = this.firestore
+          .collection('patients')
+          .doc(patientId)
+          .collection('diagnoses')
+          .doc(recordId);
+        const dSnap = await diagRef.get();
+        if (dSnap.exists) {
+          await diagRef.set(updatePayload, { merge: true });
+          const dData = dSnap.data() as any;
+          if (dData && dData.doctorId) {
+            try {
+              const docDiagRef = this.firestore
+                .collection('doctors')
+                .doc(dData.doctorId)
+                .collection('diagnoses')
+                .doc(recordId);
+              const docSnap = await docDiagRef.get();
+              if (docSnap.exists) {
+                await docDiagRef.set(updatePayload, { merge: true });
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {
+        // Non-blocking if diagnoses subcollection does not exist
       }
     }
   }

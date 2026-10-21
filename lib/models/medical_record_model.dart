@@ -42,6 +42,7 @@ class MedicalRecordModel {
   final int? fabricVersion;
   final DateTime? fabricTimestamp;
   final String? opaqueRecordKey;
+  final Map<String, dynamic>? prescriptionData;
 
   MedicalRecordModel({
     required this.id,
@@ -64,7 +65,18 @@ class MedicalRecordModel {
     this.fabricVersion,
     this.fabricTimestamp,
     this.opaqueRecordKey,
+    this.prescriptionData,
   });
+
+  List<Map<String, dynamic>> get prescribedDrugs {
+    if (prescriptionData != null && prescriptionData!['drugs'] is List) {
+      return (prescriptionData!['drugs'] as List)
+          .whereType<Map>()
+          .map((d) => Map<String, dynamic>.from(d))
+          .toList();
+    }
+    return const [];
+  }
 
   /// Serializes medical record metadata for client-side Firestore creation/update.
   /// Privileged blockchain proof attributes ('fabricStatus', 'fabricTxId', etc.)
@@ -85,6 +97,7 @@ class MedicalRecordModel {
     'isArchived':  isArchived,
     'fileHash':    fileHash,
     if (uploadedBy != null && uploadedBy!.isNotEmpty) 'uploadedBy': uploadedBy,
+    if (prescriptionData != null) 'prescriptionData': prescriptionData,
   };
 
   /// Serializes record metadata. Blockchain proof fields are omitted from client writes
@@ -125,6 +138,9 @@ class MedicalRecordModel {
             ? (m['fabricTimestamp'] as Timestamp).toDate()
             : (m['fabricTimestamp'] is String ? DateTime.tryParse(m['fabricTimestamp']) : null),
         opaqueRecordKey: m['opaqueRecordKey'],
+        prescriptionData: m['prescriptionData'] is Map<String, dynamic>
+            ? Map<String, dynamic>.from(m['prescriptionData'] as Map)
+            : (m['prescriptionData'] is Map ? Map<String, dynamic>.from(m['prescriptionData'] as Map) : null),
       );
 
   MedicalRecordModel copyWithProof({
@@ -154,6 +170,7 @@ class MedicalRecordModel {
     fabricVersion: fabricVersion ?? this.fabricVersion,
     fabricTimestamp: fabricTimestamp ?? this.fabricTimestamp,
     opaqueRecordKey: opaqueRecordKey ?? this.opaqueRecordKey,
+    prescriptionData: prescriptionData,
   );
 }
 

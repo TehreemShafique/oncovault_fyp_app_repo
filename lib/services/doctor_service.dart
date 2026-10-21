@@ -17,7 +17,8 @@ typedef ApproveAppointmentCallable = Future<Map<String, dynamic>> Function({
   required String appointmentId,
 });
 
-typedef UpdateDoctorAvailabilityCallable = Future<Map<String, dynamic>> Function({
+typedef UpdateDoctorAvailabilityCallable = Future<Map<String, dynamic>>
+    Function({
   required Map<String, dynamic> availability,
   bool? isAvailable,
 });
@@ -40,7 +41,8 @@ typedef ReviewClinicalNoteCallable = Future<Map<String, dynamic>> Function({
   String? reviewNotes,
 });
 
-typedef WatchAlertsStream = Stream<List<CriticalAlert>> Function(String doctorId);
+typedef WatchAlertsStream = Stream<List<CriticalAlert>> Function(
+    String doctorId);
 
 class DoctorService {
   final FirebaseFirestore? _customDb;
@@ -490,8 +492,7 @@ class DoctorService {
 
       final patientData = patientApptSnap.data() as Map<String, dynamic>;
       final mirrorDoctorId = patientData['doctorId']?.toString().trim() ?? '';
-      final mirrorPatientId =
-          patientData['patientId']?.toString().trim() ?? '';
+      final mirrorPatientId = patientData['patientId']?.toString().trim() ?? '';
       final mirrorRawStatus = patientData['status']?.toString();
 
       if (mirrorDoctorId != serverDoctorId ||
@@ -534,8 +535,7 @@ class DoctorService {
         );
       }
 
-      final mirrorTimeSlot =
-          patientData['timeSlot']?.toString().trim() ?? '';
+      final mirrorTimeSlot = patientData['timeSlot']?.toString().trim() ?? '';
       if (mirrorTimeSlot != serverTimeSlot) {
         throw AppointmentMirrorInconsistentException(
           'Patient appointment mirror timeSlot ($mirrorTimeSlot) conflicts with authoritative timeSlot ($serverTimeSlot).',
@@ -548,8 +548,7 @@ class DoctorService {
       // C. Derive canonical slotKey and verify/reserve slot lock
       final authoritativeSlotKey =
           buildSlotKey(serverAppointmentDate, serverTimeSlot);
-      final slotRef =
-          _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
+      final slotRef = _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
 
       final slotSnap = await tx.get(slotRef);
       bool shouldWriteSlotLock = true;
@@ -590,7 +589,8 @@ class DoctorService {
       verifiedPatientId = serverPatientId;
       verifiedAppointmentDate = serverAppointmentDate;
       verifiedTimeSlot = serverTimeSlot;
-      verifiedDoctorName = (apptData['doctorName'] ?? appt.doctorName).toString();
+      verifiedDoctorName =
+          (apptData['doctorName'] ?? appt.doctorName).toString();
 
       // ── PHASE 2: ATOMIC WRITES ──
       final nowTimestamp = FieldValue.serverTimestamp();
@@ -621,7 +621,8 @@ class DoctorService {
       await _sendPatientNotification(
         patientId: verifiedPatientId ?? trimmedPatientId,
         title: 'Appointment Approved ✓',
-        body: 'Your appointment with ${verifiedDoctorName ?? appt.doctorName} on '
+        body:
+            'Your appointment with ${verifiedDoctorName ?? appt.doctorName} on '
             '${_fmt(verifiedAppointmentDate ?? appt.appointmentDate)} at ${verifiedTimeSlot ?? appt.timeSlot} '
             'has been approved.',
         type: 'appointment',
@@ -871,8 +872,7 @@ class DoctorService {
 
       final patientData = patientApptSnap.data() as Map<String, dynamic>;
       final mirrorDoctorId = patientData['doctorId']?.toString().trim() ?? '';
-      final mirrorPatientId =
-          patientData['patientId']?.toString().trim() ?? '';
+      final mirrorPatientId = patientData['patientId']?.toString().trim() ?? '';
       final mirrorRawStatus = patientData['status']?.toString();
 
       if (mirrorDoctorId != serverDoctorId ||
@@ -919,8 +919,7 @@ class DoctorService {
         );
       }
 
-      final mirrorTimeSlot =
-          patientData['timeSlot']?.toString().trim() ?? '';
+      final mirrorTimeSlot = patientData['timeSlot']?.toString().trim() ?? '';
       if (mirrorTimeSlot != serverTimeSlot) {
         throw AppointmentMirrorInconsistentException(
           'Patient appointment mirror timeSlot ($mirrorTimeSlot) conflicts with authoritative timeSlot ($serverTimeSlot).',
@@ -933,8 +932,7 @@ class DoctorService {
       // 3. Derive canonical slotKey and validate existing slot lock
       final authoritativeSlotKey =
           buildSlotKey(serverAppointmentDate, serverTimeSlot);
-      final slotRef =
-          _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
+      final slotRef = _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
 
       final slotSnap = await tx.get(slotRef);
 
@@ -963,8 +961,7 @@ class DoctorService {
         // Verify foreign lock is not malformed
         final existingPatientId =
             slotData['patientId']?.toString().trim() ?? '';
-        final existingTimeSlot =
-            slotData['timeSlot']?.toString().trim() ?? '';
+        final existingTimeSlot = slotData['timeSlot']?.toString().trim() ?? '';
         final rawLockDate = slotData['date'];
 
         if (existingPatientId.isEmpty ||
@@ -1179,8 +1176,7 @@ class DoctorService {
 
       final patientData = patientApptSnap.data() as Map<String, dynamic>;
       final mirrorDoctorId = patientData['doctorId']?.toString().trim() ?? '';
-      final mirrorPatientId =
-          patientData['patientId']?.toString().trim() ?? '';
+      final mirrorPatientId = patientData['patientId']?.toString().trim() ?? '';
       final mirrorRawStatus = patientData['status']?.toString();
 
       if (mirrorDoctorId != serverDoctorId ||
@@ -1222,8 +1218,7 @@ class DoctorService {
         );
       }
 
-      final mirrorTimeSlot =
-          patientData['timeSlot']?.toString().trim() ?? '';
+      final mirrorTimeSlot = patientData['timeSlot']?.toString().trim() ?? '';
       if (mirrorTimeSlot != serverTimeSlot) {
         throw AppointmentMirrorInconsistentException(
           'Patient appointment mirror timeSlot ($mirrorTimeSlot) conflicts with authoritative timeSlot ($serverTimeSlot).',
@@ -1261,8 +1256,7 @@ class DoctorService {
             slotData['appointmentId']?.toString().trim() ?? '';
         final existingPatientId =
             slotData['patientId']?.toString().trim() ?? '';
-        final existingTimeSlot =
-            slotData['timeSlot']?.toString().trim() ?? '';
+        final existingTimeSlot = slotData['timeSlot']?.toString().trim() ?? '';
 
         if (existingApptId.isEmpty ||
             existingPatientId.isEmpty ||
@@ -1502,8 +1496,7 @@ class DoctorService {
 
       final patientData = patientApptSnap.data() as Map<String, dynamic>;
       final mirrorDoctorId = patientData['doctorId']?.toString().trim() ?? '';
-      final mirrorPatientId =
-          patientData['patientId']?.toString().trim() ?? '';
+      final mirrorPatientId = patientData['patientId']?.toString().trim() ?? '';
       final mirrorRawStatus = patientData['status']?.toString();
 
       if (mirrorDoctorId != serverDoctorId ||
@@ -1545,8 +1538,7 @@ class DoctorService {
         );
       }
 
-      final mirrorTimeSlot =
-          patientData['timeSlot']?.toString().trim() ?? '';
+      final mirrorTimeSlot = patientData['timeSlot']?.toString().trim() ?? '';
       if (mirrorTimeSlot != serverTimeSlot) {
         throw AppointmentMirrorInconsistentException(
           'Patient appointment mirror timeSlot ($mirrorTimeSlot) conflicts with authoritative timeSlot ($serverTimeSlot).',
@@ -1559,8 +1551,7 @@ class DoctorService {
       // 3. Derive canonical slotKey and verify existing confirmed slot lock
       final authoritativeSlotKey =
           buildSlotKey(serverAppointmentDate, serverTimeSlot);
-      final slotRef =
-          _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
+      final slotRef = _bookedSlots(serverDoctorId).doc(authoritativeSlotKey);
 
       final slotSnap = await tx.get(slotRef);
 
@@ -1572,12 +1563,9 @@ class DoctorService {
       }
 
       final slotData = slotSnap.data() as Map<String, dynamic>? ?? {};
-      final existingApptId =
-          slotData['appointmentId']?.toString().trim() ?? '';
-      final existingPatientId =
-          slotData['patientId']?.toString().trim() ?? '';
-      final existingTimeSlot =
-          slotData['timeSlot']?.toString().trim() ?? '';
+      final existingApptId = slotData['appointmentId']?.toString().trim() ?? '';
+      final existingPatientId = slotData['patientId']?.toString().trim() ?? '';
+      final existingTimeSlot = slotData['timeSlot']?.toString().trim() ?? '';
 
       if (existingApptId.isEmpty ||
           existingPatientId.isEmpty ||
@@ -1683,8 +1671,8 @@ class DoctorService {
       for (final pid in allIds) {
         final doc = await _patients.doc(pid).get();
         if (doc.exists) {
-          profiles
-              .add(PatientProfile.fromMap(doc.data() as Map<String, dynamic>));
+          profiles.add(PatientProfile.fromMap(
+              {...doc.data() as Map<String, dynamic>, 'uid': doc.id}));
         } else {
           final uDoc = await _users.doc(pid).get();
           if (uDoc.exists) {
@@ -1705,7 +1693,8 @@ class DoctorService {
   Future<PatientProfile?> fetchPatient(String patientId) async {
     final doc = await _patients.doc(patientId).get();
     if (doc.exists) {
-      return PatientProfile.fromMap(doc.data() as Map<String, dynamic>);
+      return PatientProfile.fromMap(
+          {...doc.data() as Map<String, dynamic>, 'uid': doc.id});
     }
     final uDoc = await _users.doc(patientId).get();
     if (!uDoc.exists) return null;
@@ -1721,7 +1710,8 @@ class DoctorService {
   // ── Consent Management (FR-M2.2, FR-M8.2) ────────────────────
   /// Evaluates patient consent on Hyperledger Fabric. Fails closed if the ledger is unreachable
   /// or if consent is not active/revoked. Never falls back to unverified Firestore state.
-  Future<bool> hasConsent(String doctorId, String patientId, {String scope = 'BLOOD_CANCER_RESEARCH'}) async {
+  Future<bool> hasConsent(String doctorId, String patientId,
+      {String scope = 'BLOOD_CANCER_RESEARCH'}) async {
     try {
       final ledgerCheck = await FabricGatewayService.instance.checkConsent(
         patientId: patientId,
@@ -1741,7 +1731,8 @@ class DoctorService {
 
   /// Evaluates local clinic appointment relationship for legacy scheduling views.
   /// Does NOT grant access to Fabric-protected medical records.
-  Future<bool> hasClinicAppointmentRelationship(String doctorId, String patientId) async {
+  Future<bool> hasClinicAppointmentRelationship(
+      String doctorId, String patientId) async {
     final apptSnap = await _appointments
         .where('doctorId', isEqualTo: doctorId)
         .where('patientId', isEqualTo: patientId)
@@ -1767,7 +1758,8 @@ class DoctorService {
 
     // 2. Route mutation through Trusted Fabric Gateway
     // If the gateway returns 503 or errors, fail closed. Never write uncommitted state to Firestore!
-    final expiration = DateTime.now().add(const Duration(days: 365)).toIso8601String();
+    final expiration =
+        DateTime.now().add(const Duration(days: 365)).toIso8601String();
     await FabricGatewayService.instance.grantConsent(
       providerId: doctorId,
       scope: scope,
@@ -1888,12 +1880,14 @@ class DoctorService {
               .orderBy('createdAt', descending: true)
               .snapshots()
               .map((s) => s.docs
-                  .map((d) => CriticalAlert.fromMap(d.data() as Map<String, dynamic>))
+                  .map((d) =>
+                      CriticalAlert.fromMap(d.data() as Map<String, dynamic>))
                   .toList());
 
   /// Acknowledges a critical alert via trusted Cloud Function.
   /// Records doctor UID and server timestamp, transitioning alert to ACKNOWLEDGED.
-  Future<void> acknowledgeAlert(String doctorId, String alertId, {String? notes}) async {
+  Future<void> acknowledgeAlert(String doctorId, String alertId,
+      {String? notes}) async {
     if (_customAcknowledgeCallable != null) {
       await _customAcknowledgeCallable!(
         doctorId: doctorId,
@@ -1916,7 +1910,8 @@ class DoctorService {
 
   /// Resolves an acknowledged critical alert via trusted Cloud Function.
   /// Requires alert to be acknowledged first.
-  Future<void> resolveAlert(String doctorId, String alertId, {String? notes}) async {
+  Future<void> resolveAlert(String doctorId, String alertId,
+      {String? notes}) async {
     if (_customResolveCallable != null) {
       await _customResolveCallable!(
         doctorId: doctorId,
@@ -2021,8 +2016,10 @@ class DoctorService {
     } else if (vitals['bloodPressure'] is String) {
       final parts = (vitals['bloodPressure'] as String).split('/');
       if (parts.length == 2) {
-        systolic = num.tryParse(parts[0].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 120;
-        diastolic = num.tryParse(parts[1].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 80;
+        systolic =
+            num.tryParse(parts[0].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 120;
+        diastolic =
+            num.tryParse(parts[1].replaceAll(RegExp(r'[^0-9.]'), '')) ?? 80;
       }
     }
     if (vitals['diastolicBp'] is num) {
@@ -2153,9 +2150,7 @@ class DoctorService {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((s) => s.docs
-            .map((d) => ClinicalNoteModel.fromMap(
-                d.data(),
-                docId: d.id))
+            .map((d) => ClinicalNoteModel.fromMap(d.data(), docId: d.id))
             .toList());
   }
 
@@ -2178,7 +2173,8 @@ class DoctorService {
       final result = await callable.call<Map<String, dynamic>>({
         'patientId': patientId,
         'noteId': noteId,
-        if (reviewNotes != null && reviewNotes.isNotEmpty) 'reviewNotes': reviewNotes,
+        if (reviewNotes != null && reviewNotes.isNotEmpty)
+          'reviewNotes': reviewNotes,
       });
       return Map<String, dynamic>.from(result.data);
     } on FirebaseFunctionsException catch (e) {

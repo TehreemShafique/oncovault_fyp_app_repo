@@ -1,743 +1,249 @@
-// src/services/reconciliationWorker.ts
-import crypto from 'crypto';
 import * as admin from 'firebase-admin';
 import { FabricGatewayService } from './fabricGateway';
 import { FirebaseAdminService } from './firebaseAdmin';
 import { RecordService } from './recordService';
 import { PseudonymService } from './pseudonymService';
 
+type Data = Record<string, any>;
+type Read = (ref: any) => Promise<any>;
+type Summary = { processed: number; committed: number; failed: number; blocked?: number };
+type Candidate = {
+  source: any; operation?: any; patient: string; actor: string; provider?: string;
+  id: string; domainId: string; hash: string; type: string; hospital: string; fingerprint: string;
+};
+class Blocked extends Error { }
+
+/**
+ * Projection-only recovery. Finalization and queue membership are not approval
+ * for a new Fabric write. The current schema has no authoritative automatic
+ * submission approval, so this worker deliberately has NO Fabric submit path.
+ * Existing durable identities, keys, attempts and uncertain outcomes are retained.
+ */
 export class ReconciliationWorker {
   private static instance: ReconciliationWorker | null = null;
-  private _fabricGateway?: FabricGatewayService;
-  private _firebaseAdmin?: FirebaseAdminService;
-  private _recordService?: RecordService;
   private intervalTimer: NodeJS.Timeout | null = null;
-  private isReconciling: boolean = false;
-
+  private isReconcilingNotes = false;
+  private isReconcilingTreatment = false;
   constructor(
-    fabricGateway?: FabricGatewayService,
-    firebaseAdmin?: FirebaseAdminService,
-    recordService?: RecordService
-  ) {
-    this._fabricGateway = fabricGateway;
-    this._firebaseAdmin = firebaseAdmin;
-    this._recordService = recordService;
-  }
-
+    private readonly _fabricGateway?: FabricGatewayService,
+    private readonly _firebaseAdmin?: FirebaseAdminService,
+    private readonly _recordService?: RecordService
+  ) { }
   public static getInstance(): ReconciliationWorker {
-    if (!ReconciliationWorker.instance) {
-      ReconciliationWorker.instance = new ReconciliationWorker();
-    }
-    return ReconciliationWorker.instance;
+    return this.instance || (this.instance = new ReconciliationWorker());
   }
+  private get fabricGateway(): FabricGatewayService { return this._fabricGateway || FabricGatewayService.getInstance(); }
+  private get firebaseAdmin(): FirebaseAdminService { return this._firebaseAdmin || FirebaseAdminService.getInstance(); }
+  private get recordService(): RecordService { return this._recordService || new RecordService(this.fabricGateway, this.firebaseAdmin); }
 
-  private get fabricGateway(): FabricGatewayService {
-    return this._fabricGateway || FabricGatewayService.getInstance();
-  }
-
-  private get firebaseAdmin(): FirebaseAdminService {
-    return this._firebaseAdmin || FirebaseAdminService.getInstance();
-  }
-
-  private get recordService(): RecordService {
-    return (
-      this._recordService ||
-      new RecordService(this.fabricGateway, this.firebaseAdmin)
-    );
-  }
-
-  private isReconcilingNotes: boolean = false;
-  private isReconcilingTreatment: boolean = false;
-
-  /**
-   * Starts a background periodic sweeper loop to discover and anchor PENDING clinical notes and treatment operations.
-   */
-  public startPeriodicSweeper(intervalMs: number = 10000): void {
-    if (this.intervalTimer) {
-      return;
-    }
+  public startPeriodicSweeper(intervalMs = 10000): void {
+    if (this.intervalTimer) return;
     this.intervalTimer = setInterval(async () => {
-      try {
-        await this.reconcilePendingClinicalNotes();
-      } catch (err: any) {
-        console.warn(`[ReconciliationWorker] Clinical notes sweeper cycle error: ${err.message}`);
-      }
-      try {
-        await this.reconcilePendingTreatmentOperations();
-      } catch (err: any) {
-        console.warn(`[ReconciliationWorker] Treatment operations sweeper cycle error: ${err.message}`);
+      for (const run of [() => this.reconcilePendingClinicalNotes(), () => this.reconcilePendingTreatmentOperations()]) {
+        try { await run(); }
+        catch (_) { console.warn('[ReconciliationWorker] Recovery query unavailable; no Fabric submission.'); }
       }
     }, intervalMs);
-    console.info(`[+] OncoVault Fabric Reconciliation Worker started (interval: ${intervalMs}ms).`);
+    console.info('[+] OncoVault projection-only reconciliation started (interval: ' + intervalMs + 'ms).');
   }
-
-  /**
-   * Stops the background periodic sweeper loop cleanly.
-   */
   public stopPeriodicSweeper(): void {
-    if (this.intervalTimer) {
-      clearInterval(this.intervalTimer);
-      this.intervalTimer = null;
-      console.info('[-] OncoVault Fabric Reconciliation Worker stopped.');
-    }
+    if (this.intervalTimer) clearInterval(this.intervalTimer);
+    this.intervalTimer = null;
+  }
+  private require(condition: unknown, reason: string): asserts condition { if (!condition) throw new Blocked(reason); }
+  private id(value: unknown): value is string { return typeof value === 'string' && value.length > 0 && !value.includes('/'); }
+  private hash(value: unknown): value is string { return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value); }
+  private date(value: any): boolean {
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    return value != null && Number.isFinite(date.getTime()) && date.getTime() <= Date.now();
+  }
+  private eligible(data: Data, field: string): boolean {
+    const status = data[field] || 'PENDING';
+    if (status === 'COMMITTED') return data.projectionPending === true;
+    // Lease expiry permits a proof READ, never a takeover or new submission.
+    if (status === 'PROCESSING') return typeof data.lockExpiresAt === 'number' && data.lockExpiresAt < Date.now();
+    return ['PENDING', 'FAILED_RETRYABLE', 'UNCERTAIN_RETRYABLE'].includes(status) &&
+      (!data.nextRetryAt || data.nextRetryAt <= Date.now());
   }
 
-  /**
-   * Reconciles all pending or retryable clinical notes across patients:
-   * 1. Finds submitted or reviewed notes awaiting blockchain anchoring.
-   * 2. Acquires atomic lock lease with unique fencing token (PROCESSING).
-   * 3. Validates canonical hash integrity before submission.
-   * 4. Checks if already anchored on the ledger (idempotent recovery).
-   * 5. Submits AnchorRecordHash transaction to Hyperledger Fabric.
-   * 6. Verifies on-chain receipt and validates lease fence before marking COMMITTED in Firestore.
-   */
-  public async reconcilePendingClinicalNotes(): Promise<{
-    processed: number;
-    committed: number;
-    failed: number;
-  }> {
-    if (this.isReconcilingNotes) {
-      return { processed: 0, committed: 0, failed: 0 };
+  private async candidate(db: any, ref: any, treatment: boolean, read: Read): Promise<Candidate> {
+    const snapshot = await read(ref);
+    this.require(snapshot.exists, 'SOURCE_MISSING');
+    const operation = snapshot.data() as Data;
+    let source = ref, data = operation, plan: Data | undefined;
+    const patient = operation.patientId;
+    this.require(this.id(patient), 'PATIENT_IDENTITY_MISSING');
+    let id: string, domainId: string, actor: string, provider: string | undefined, hash: string, type: string;
+    if (treatment) {
+      this.require(operation.operationId === ref.id && operation.operationType === 'ANCHOR_RECORD' &&
+        operation.documentType === 'TREATMENT_PLAN', 'OPERATION_IDENTITY_MISMATCH');
+      this.require(this.eligible(operation, 'status'), 'OPERATION_NOT_RECOVERABLE');
+      this.require(this.id(operation.planId) && this.id(operation.recordId), 'SOURCE_IDENTITY_MISSING');
+      id = operation.recordId;
+      type = operation.recordType;
+      this.require(['TREATMENT_TASK_COMPLETION', 'TREATMENT_PROGRESS'].includes(type), 'UNSUPPORTED_SOURCE_TYPE');
+      const segment = type === 'TREATMENT_TASK_COMPLETION' ? 'tasks' : 'progress_updates';
+      const path = 'patients/' + patient + '/treatment_plans/' + operation.planId + '/' + segment + '/' + id;
+      this.require(operation.sourceDocPath === path, 'SOURCE_PATH_MISMATCH');
+      source = db.doc(path);
+      const sourceSnapshot = await read(source);
+      this.require(sourceSnapshot.exists, 'SOURCE_MISSING');
+      data = sourceSnapshot.data();
+      this.require(data.patientId === patient && data.planId === operation.planId, 'SOURCE_OWNERSHIP_MISMATCH');
+      const planSnapshot = await read(db.doc('patients/' + patient + '/treatment_plans/' + operation.planId));
+      this.require(planSnapshot.exists, 'PLAN_MISSING');
+      plan = planSnapshot.data();
+      // Reuse the execution boundary; inactive-plan historical recovery requires
+      // an explicit policy decision rather than an automatic exception.
+      this.require(plan?.patientId === patient && (!plan.planId || plan.planId === operation.planId) &&
+        plan.status === 'active', 'PLAN_NOT_ACTIVE');
+      provider = plan.doctorId;
+      this.require(this.id(provider), 'PLAN_DOCTOR_MISSING');
+      if (type === 'TREATMENT_TASK_COMPLETION') {
+        this.require(data.taskId === id && data.status === 'completed' && this.date(data.completedAt), 'TASK_NOT_FINALIZED');
+        actor = data.completedByNurseId || data.performerUid;
+        if (data.completedByNurseId && data.performerUid) this.require(data.completedByNurseId === data.performerUid, 'ACTOR_IDENTITY_MISMATCH');
+        hash = this.recordService.computeCanonicalTaskHash(data);
+        domainId = 'task_' + operation.planId + '_' + id;
+      } else {
+        this.require(data.updateId === id && this.date(data.timestamp), 'PROGRESS_NOT_FINALIZED');
+        actor = data.authorUid || data.authorId;
+        hash = this.recordService.computeCanonicalProgressHash(data);
+        domainId = 'tp_' + operation.planId + '_' + id;
+      }
+      const queuedHash = operation.canonicalHash || operation.payloadHash;
+      this.require(this.hash(queuedHash) && queuedHash.toLowerCase() === hash, 'QUEUED_CONTENT_IDENTITY_UNPROVEN');
+      for (const fingerprint of [operation.canonicalHash, operation.payloadHash]) {
+        this.require(!fingerprint || (this.hash(fingerprint) && fingerprint.toLowerCase() === hash), 'QUEUED_CONTENT_IDENTITY_UNPROVEN');
+      }
+    } else {
+      id = ref.id;
+      type = 'CLINICAL_NOTE';
+      this.require(operation.noteId === id && ref.path === 'patients/' + patient + '/clinical_notes/' + id, 'NOTE_IDENTITY_MISMATCH');
+      this.require(['SUBMITTED', 'REVIEWED'].includes(data.status) && this.eligible(data, 'fabricStatus'), 'NOTE_NOT_FINALIZED');
+      this.require(typeof data.noteType === 'string' && data.noteType.trim() && this.date(data.createdAtIso || data.createdAt), 'NOTE_SCHEMA_INVALID');
+      actor = data.authorUid || data.authorId;
+      hash = this.recordService.computeCanonicalClinicalNoteHash(data);
+      this.require(this.hash(data.fileHash) && data.fileHash.toLowerCase() === hash, 'CONTENT_HASH_MISMATCH');
+      domainId = id;
     }
-
-    const db = this.firebaseAdmin.getFirestoreInstance();
-    if (!db) {
-      return { processed: 0, committed: 0, failed: 0 };
+    this.require(this.id(actor) && this.hash(hash), 'ACTOR_OR_HASH_MISSING');
+    if (data.authorUid && data.authorId) this.require(data.authorUid === data.authorId, 'ACTOR_IDENTITY_MISMATCH');
+    if (data.fileHash) this.require(data.fileHash.toLowerCase() === hash, 'CONTENT_HASH_MISMATCH');
+    const patientSnapshot = await read(db.doc('patients/' + patient));
+    const patientUser = await read(db.doc('users/' + patient));
+    const patientData = patientSnapshot.data();
+    this.require(patientSnapshot.exists && patientUser.exists && patientUser.data()?.role === 'patient' &&
+      (!patientData?.uid || patientData.uid === patient), 'PATIENT_NOT_AUTHORITATIVE');
+    const hospital = patientData?.hospitalId;
+    this.require(this.id(hospital) && (treatment ? !data.hospitalId || data.hospitalId === hospital : data.hospitalId === hospital) &&
+      (!plan || (plan.hospitalId === hospital && operation.hospitalId === hospital)), 'HOSPITAL_BOUNDARY_UNPROVEN');
+    const actorSnapshot = await read(db.doc('users/' + actor));
+    const user = actorSnapshot.data();
+    this.require(actorSnapshot.exists && user?.hospitalId === hospital && !['inactive', 'suspended'].includes(user.status), 'ACTOR_NOT_AUTHORIZED');
+    if (user.role === 'doctor') {
+      this.require(!treatment, 'TREATMENT_ACTOR_NOT_ASSIGNED_NURSE');
+      provider = actor;
+    } else {
+      this.require(['nurse', 'house_officer'].includes(user.role), 'ACTOR_ROLE_UNSUPPORTED');
+      const assignment = await read(db.doc('nurse_patient_assignments/' + actor + '_' + patient));
+      const a = assignment.data();
+      this.require(assignment.exists && a?.status === 'active' && a.nurseId === actor && a.patientId === patient && a.hospitalId === hospital, 'ASSIGNMENT_NOT_ACTIVE');
     }
+    if (provider) {
+      const doctorUser = await read(db.doc('users/' + provider));
+      const doctorProfile = await read(db.doc('doctors/' + provider));
+      this.require(doctorUser.exists && doctorUser.data()?.role === 'doctor' && doctorUser.data()?.hospitalId === hospital &&
+        !['inactive', 'suspended'].includes(doctorUser.data()?.status) && doctorProfile.exists &&
+        (!doctorProfile.data()?.uid || doctorProfile.data()?.uid === provider) &&
+        (!doctorProfile.data()?.hospitalId || doctorProfile.data()?.hospitalId === hospital), 'DOCTOR_NOT_AUTHORITATIVE');
+    }
+    return {
+      source, operation: treatment ? ref : undefined, patient, actor, provider, id, domainId, hash, type, hospital,
+      fingerprint: JSON.stringify([patient, actor, provider, id, domainId, hash, type, hospital,
+        operation.operationId, operation.idempotencyKey, operation.canonicalHash, operation.payloadHash])
+    };
+  }
 
-    this.isReconcilingNotes = true;
-    let processed = 0;
-    let committed = 0;
-    let failed = 0;
+  private async consent(candidate: Candidate): Promise<void> {
+    if (!candidate.provider) return; // Nursing authorship uses the existing assignment boundary.
+    const patient = PseudonymService.generatePatientPseudoId(candidate.patient);
+    const provider = PseudonymService.generateProviderPseudoId(candidate.provider);
+    const result = JSON.parse(await this.fabricGateway.evaluateTransaction('CheckConsent', patient, provider, 'DIRECT_CARE'));
+    this.require(result.active === true && result.status === 'GRANTED' && result.scope === 'DIRECT_CARE' &&
+      result.patientPseudoId === patient && result.providerPseudoId === provider, 'CONSENT_NOT_CONFIRMED');
+    if (result.expirationTimestamp != null) this.require(Number.isFinite(Date.parse(result.expirationTimestamp)) &&
+      Date.parse(result.expirationTimestamp) > Date.now(), 'CONSENT_EXPIRED');
+  }
 
-    try {
-      // 1. Query clinical notes in SUBMITTED or REVIEWED status (excluding DRAFT)
-      const snapshot = await db
-        .collectionGroup('clinical_notes')
-        .where('status', 'in', ['SUBMITTED', 'REVIEWED'])
-        .get();
-
-      const candidateDocs = snapshot.docs.filter((doc) => {
-        const data = doc.data() as Record<string, any>;
-        const fStatus = data.fabricStatus || 'PENDING';
-        const nowMs = Date.now();
-        const leaseExpired = data.lockExpiresAt && data.lockExpiresAt < nowMs;
-        const retryEligible = !data.nextRetryAt || data.nextRetryAt <= nowMs;
-
-        return (
-          (fStatus === 'PENDING' && retryEligible) ||
-          (fStatus === 'FAILED_RETRYABLE' && retryEligible) ||
-          (fStatus === 'PROCESSING' && leaseExpired)
-        );
+  private async recover(db: any, ref: any, treatment: boolean): Promise<boolean> {
+    const candidate = await this.candidate(db, ref, treatment, r => r.get());
+    await this.consent(candidate); // Never use the deferred Doctor EHR Firestore fallback.
+    const key = PseudonymService.generateOpaqueRecordKey(candidate.patient, candidate.domainId);
+    // Any exception (including NOT_FOUND), invalid response, or different hash
+    // blocks recovery. None can authorize a new anchor or an automatic revision.
+    const proof = JSON.parse(await this.fabricGateway.evaluateTransaction('GetRecordProof', key));
+    this.require(proof?.recordId === key && proof.status === 'ACTIVE' && proof.sha256Hash === candidate.hash &&
+      this.hash(proof.txId) && Number.isInteger(proof.version) && proof.version > 0 && this.date(proof.timestamp), 'MATCHING_COMMITTED_PROOF_REQUIRED');
+    this.require(proof.metadata?.documentType === (treatment ? 'TREATMENT_PLAN' : 'CLINICAL_NOTE'), 'PROOF_TYPE_MISMATCH');
+    const verification = JSON.parse(await this.fabricGateway.evaluateTransaction('VerifyRecordHash', key, candidate.hash));
+    this.require(verification.verified === true && verification.status === 'VERIFIED' && verification.txId === proof.txId &&
+      verification.recordId === key && verification.ledgerHash === candidate.hash, 'COMMIT_PROOF_UNCONFIRMED');
+    await this.consent(candidate);
+    // Reuse fresh Firestore transactions on the existing source/operation docs.
+    // No operation or key is created; no expired submission lease is reclaimed.
+    return db.runTransaction(async (transaction: any) => {
+      const snapshot = await transaction.get(ref);
+      const current = snapshot.data();
+      if (current && (treatment ? current.status : current.fabricStatus) === 'COMMITTED' && !current.projectionPending) return false;
+      const fresh = await this.candidate(db, ref, treatment, r => transaction.get(r));
+      this.require(fresh.fingerprint === candidate.fingerprint, 'SOURCE_CHANGED_DURING_RECOVERY');
+      const sourceSnapshot = await transaction.get(fresh.source);
+      for (const data of [current, sourceSnapshot.data()]) {
+        for (const txId of [data?.txId, data?.fabricTxId]) this.require(!txId || txId === proof.txId, 'DIFFERENT_TRANSACTION_REQUIRES_RECONCILIATION');
+      }
+      const projection = {
+        fabricStatus: 'COMMITTED', fabricTxId: proof.txId, fabricVersion: proof.version,
+        fabricTimestamp: proof.timestamp, fileHash: candidate.hash, opaqueRecordKey: key,
+        lastAnchoredAt: admin.firestore.Timestamp.fromDate(new Date(proof.timestamp)),
+        ...(sourceSnapshot.data()?.projectionPending !== undefined ? { projectionPending: false } : {})
+      };
+      transaction.update(fresh.source, projection);
+      if (fresh.operation) transaction.update(fresh.operation, {
+        status: 'COMMITTED', fabricTxId: proof.txId, txId: proof.txId, fabricVersion: proof.version,
+        fabricTimestamp: proof.timestamp, opaqueRecordKey: key,
+        ...(current.projectionPending !== undefined ? { projectionPending: false } : {})
       });
+      return true;
+    });
+  }
 
-      for (const doc of candidateDocs) {
-        processed++;
-        const noteRef = doc.ref;
-
-        // 2. Atomic Lease Gating with Fencing Token
-        let noteData: Record<string, any> | null = null;
+  private async reconcile(treatment: boolean): Promise<Summary> {
+    const summary: Summary = { processed: 0, committed: 0, failed: 0, blocked: 0 };
+    if (treatment ? this.isReconcilingTreatment : this.isReconcilingNotes) return summary;
+    if (treatment) this.isReconcilingTreatment = true; else this.isReconcilingNotes = true;
+    try {
+      const db = this.firebaseAdmin.getFirestoreInstance();
+      if (!db) return summary;
+      const query = treatment ? db.collection('gateway_operations').where('documentType', '==', 'TREATMENT_PLAN')
+        : db.collectionGroup('clinical_notes').where('status', 'in', ['SUBMITTED', 'REVIEWED']);
+      const snapshot = await query.get();
+      for (const doc of snapshot.docs) {
+        if (!this.eligible(doc.data(), treatment ? 'status' : 'fabricStatus')) continue;
+        summary.processed++;
         try {
-          noteData = await db.runTransaction(async (transaction) => {
-            const freshDoc = await transaction.get(noteRef);
-            if (!freshDoc.exists) return null;
-            const data = freshDoc.data() as Record<string, any>;
-            const isFinalized = data.status === 'SUBMITTED' || data.status === 'REVIEWED';
-            if (!isFinalized) return null;
-
-            const fStatus = data.fabricStatus || 'PENDING';
-            const nowMs = Date.now();
-            const leaseExpired = data.lockExpiresAt && data.lockExpiresAt < nowMs;
-            const retryEligible = !data.nextRetryAt || data.nextRetryAt <= nowMs;
-            const eligible =
-              (fStatus === 'PENDING' && retryEligible) ||
-              (fStatus === 'FAILED_RETRYABLE' && retryEligible) ||
-              (fStatus === 'PROCESSING' && leaseExpired);
-
-            if (!eligible) return null;
-
-            const leaseToken = crypto.randomUUID();
-            transaction.update(noteRef, {
-              fabricStatus: 'PROCESSING',
-              lockExpiresAt: nowMs + 60000, // 60-second lease
-              leaseToken,
-              processingStartedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-
-            return { ...data, id: freshDoc.id, leaseToken };
-          });
-        } catch (lockErr: any) {
-          console.warn(`[ReconciliationWorker] Lock contention for note ${doc.id}: ${lockErr.message}`);
-          continue;
-        }
-
-        if (!noteData) {
-          continue;
-        }
-
-        const noteId = noteData.noteId || noteData.id || doc.id;
-        const patientId = noteData.patientId;
-        const storedHash = (noteData.fileHash || '').toLowerCase();
-        const activeLeaseToken = noteData.leaseToken;
-
-        // 3. Server-side Content Validation & Canonical Hash Recalculation
-        const recalculatedHash = this.recordService.computeCanonicalClinicalNoteHash(noteData);
-        if (!storedHash || recalculatedHash.toLowerCase() !== storedHash) {
-          console.error(
-            `[SECURITY] Tamper detected for note '${noteId}' of patient '${patientId}'. Recalculated '${recalculatedHash}' != Stored '${storedHash}'`
-          );
-          await db.runTransaction(async (t) => {
-            const snap = await t.get(noteRef);
-            if (!snap.exists) return;
-            const curr = snap.data() as Record<string, any>;
-            if (curr.leaseToken !== activeLeaseToken) return;
-            t.update(noteRef, {
-              fabricStatus: 'FAILED_PERMANENT',
-              fabricError: 'Canonical hash mismatch / content tampering detected',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          });
-          failed++;
-          continue;
-        }
-
-        // 4. Generate deterministic opaque ledger key
-        const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(patientId, noteId);
-
-        // 5. Existing Ledger Proof Check (Deduplication / Idempotent Recovery)
-        let alreadyCommitted = false;
-        try {
-          const proofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
-          if (proofStr && proofStr.trim() !== '') {
-            const existingProof = JSON.parse(proofStr);
-            if (
-              existingProof.sha256Hash &&
-              existingProof.sha256Hash.toLowerCase() === storedHash
-            ) {
-              const committedProof = {
-                txId: existingProof.txId,
-                fileHash: storedHash,
-                version: existingProof.version || 1,
-                timestamp: existingProof.timestamp,
-                opaqueRecordKey
-              };
-
-              let fenced = false;
-              await db.runTransaction(async (t) => {
-                const snap = await t.get(noteRef);
-                if (!snap.exists) return;
-                const curr = snap.data() as Record<string, any>;
-                if (curr.leaseToken !== activeLeaseToken) return;
-                t.update(noteRef, {
-                  fabricStatus: 'COMMITTED',
-                  fabricTxId: existingProof.txId,
-                  fabricVersion: existingProof.version || 1,
-                  fabricTimestamp: existingProof.timestamp,
-                  opaqueRecordKey,
-                  lastAnchoredAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                fenced = true;
-              });
-
-              if (fenced) {
-                await this.firebaseAdmin.updateRecordProof(noteId, committedProof, patientId);
-                alreadyCommitted = true;
-                committed++;
-              }
-            }
-          }
-        } catch (_) {
-          // Record not yet anchored on ledger — proceed to submit
-        }
-
-        if (alreadyCommitted) {
-          continue;
-        }
-
-        // 6. Submit AnchorRecordHash transaction to Hyperledger Fabric
-        try {
-          const metadata = {
-            documentType: 'CLINICAL_NOTE',
-            recordType: (noteData.noteType || 'progress_note').toUpperCase(),
-            schemaVersion: '1.0'
-          };
-
-          const { result, txId } = await this.fabricGateway.submitTransaction(
-            'AnchorRecordHash',
-            opaqueRecordKey,
-            storedHash,
-            JSON.stringify(metadata)
-          );
-
-          const proof = JSON.parse(result);
-
-          // 7. Verify transaction commit on ledger
-          const verifyStr = await this.fabricGateway.evaluateTransaction(
-            'VerifyRecordHash',
-            opaqueRecordKey,
-            storedHash
-          );
-          const verifyResult = JSON.parse(verifyStr);
-          if (!verifyResult.verified) {
-            throw new Error(`Ledger verification failed with status: ${verifyResult.status}`);
-          }
-
-          // 8. Update Firestore record atomically to COMMITTED with Lease Fencing Validation
-          const committedProof = {
-            txId: proof.txId || txId,
-            fileHash: storedHash,
-            version: proof.version || 1,
-            timestamp: proof.timestamp,
-            opaqueRecordKey
-          };
-
-          let fencedCommit = false;
-          await db.runTransaction(async (t) => {
-            const snap = await t.get(noteRef);
-            if (!snap.exists) {
-              throw new Error(`Note '${noteId}' deleted before commit could be written.`);
-            }
-            const curr = snap.data() as Record<string, any>;
-            if (curr.leaseToken !== activeLeaseToken) {
-              throw new Error(
-                `STALE_LEASE_FENCE: Worker lease token '${activeLeaseToken}' expired or superseded by '${curr.leaseToken}'. Aborting stale commit update.`
-              );
-            }
-            t.update(noteRef, {
-              fabricStatus: 'COMMITTED',
-              fabricTxId: committedProof.txId,
-              fabricVersion: committedProof.version,
-              fabricTimestamp: committedProof.timestamp,
-              opaqueRecordKey,
-              lastAnchoredAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            fencedCommit = true;
-          });
-
-          if (fencedCommit) {
-            await this.firebaseAdmin.updateRecordProof(noteId, committedProof, patientId);
-            committed++;
-          }
-        } catch (err: any) {
-          console.warn(
-            `[ReconciliationWorker] Anchoring attempt failed for note '${noteId}': ${err.message}`
-          );
-
-          try {
-            await db.runTransaction(async (t) => {
-              const snap = await t.get(noteRef);
-              if (!snap.exists) return;
-              const curr = snap.data() as Record<string, any>;
-              if (curr.leaseToken !== activeLeaseToken) {
-                // Lease was already reclaimed by another worker; do not overwrite state with stale failure
-                return;
-              }
-              const retryCount = (curr.retryCount || 0) + 1;
-              const isPermanent = retryCount >= 5;
-              const nextRetryDelayMs = Math.min(300000, Math.pow(2, retryCount) * 5000); // 10s, 20s, 40s, 80s, 160s, max 5m
-              const nextRetryAt = Date.now() + nextRetryDelayMs;
-
-              t.update(noteRef, {
-                fabricStatus: isPermanent ? 'FAILED_PERMANENT' : 'FAILED_RETRYABLE',
-                retryCount,
-                nextRetryAt,
-                fabricError: err.message || 'Unknown Fabric submission failure',
-                lastFailedAt: admin.firestore.FieldValue.serverTimestamp()
-              });
-            });
-          } catch (fErr: any) {
-            console.warn(`[ReconciliationWorker] Failed to record failure state: ${fErr.message}`);
-          }
-          failed++;
+          if (await this.recover(db, doc.ref, treatment)) summary.committed++;
+        } catch (error) {
+          summary.blocked!++;
+          // No patient contents, IDs, hashes, credentials or raw external errors.
+          console.warn('[ReconciliationWorker] Projection blocked: ' + (error instanceof Blocked ? error.message : 'DEPENDENCY_OR_PROOF_UNAVAILABLE') + '. No new Fabric submission is approved.');
         }
       }
+      return summary;
     } finally {
-      this.isReconcilingNotes = false;
+      if (treatment) this.isReconcilingTreatment = false; else this.isReconcilingNotes = false;
     }
-
-    return { processed, committed, failed };
   }
-
-  /**
-   * Reconciles all pending or retryable treatment operations from gateway_operations:
-   * 1. Finds operations for TREATMENT_PLAN (tasks and progress updates).
-   * 2. Acquires atomic lock lease with unique fencing token (PROCESSING).
-   * 3. Fetches and validates authoritative Firestore source document.
-   * 4. Confirms source record is finalized and eligible.
-   * 5. Computes canonical SHA-256 digest from resolved persisted values.
-   * 6. Generates deterministic domain-separated opaque record key.
-   * 7. Checks if already anchored on the ledger (idempotent recovery).
-   * 8. Submits AnchorRecordHash transaction to Hyperledger Fabric.
-   * 9. Verifies on-chain receipt and validates lease fence before marking COMMITTED.
-   * 10. Handles bounded retry and permanent failure transitions.
-   */
-  public async reconcilePendingTreatmentOperations(): Promise<{
-    processed: number;
-    committed: number;
-    failed: number;
-  }> {
-    if (this.isReconcilingTreatment) {
-      return { processed: 0, committed: 0, failed: 0 };
-    }
-
-    const db = this.firebaseAdmin.getFirestoreInstance();
-    if (!db) {
-      return { processed: 0, committed: 0, failed: 0 };
-    }
-
-    this.isReconcilingTreatment = true;
-    let processed = 0;
-    let committed = 0;
-    let failed = 0;
-
-    try {
-      // 1. Query gateway_operations for TREATMENT_PLAN documents
-      const snapshot = await db
-        .collection('gateway_operations')
-        .where('documentType', '==', 'TREATMENT_PLAN')
-        .get();
-
-      const candidateDocs = snapshot.docs.filter((doc) => {
-        const data = doc.data() as Record<string, any>;
-        const opStatus = data.status || 'PENDING';
-        const nowMs = Date.now();
-        const leaseExpired = data.lockExpiresAt && data.lockExpiresAt < nowMs;
-        const retryEligible = !data.nextRetryAt || data.nextRetryAt <= nowMs;
-
-        return (
-          (opStatus === 'PENDING' && retryEligible) ||
-          (opStatus === 'FAILED_RETRYABLE' && retryEligible) ||
-          (opStatus === 'PROCESSING' && leaseExpired)
-        );
-      });
-
-      for (const doc of candidateDocs) {
-        processed++;
-        const opRef = doc.ref;
-
-        // 2. Atomic Lease Gating with Fencing Token
-        let opData: Record<string, any> | null = null;
-        try {
-          opData = await db.runTransaction(async (transaction) => {
-            const freshOp = await transaction.get(opRef);
-            if (!freshOp.exists) return null;
-            const data = freshOp.data() as Record<string, any>;
-
-            const opStatus = data.status || 'PENDING';
-            const nowMs = Date.now();
-            const leaseExpired = data.lockExpiresAt && data.lockExpiresAt < nowMs;
-            const retryEligible = !data.nextRetryAt || data.nextRetryAt <= nowMs;
-            const eligible =
-              (opStatus === 'PENDING' && retryEligible) ||
-              (opStatus === 'FAILED_RETRYABLE' && retryEligible) ||
-              (opStatus === 'PROCESSING' && leaseExpired);
-
-            if (!eligible) return null;
-
-            const leaseToken = crypto.randomUUID();
-            transaction.update(opRef, {
-              status: 'PROCESSING',
-              lockExpiresAt: nowMs + 60000, // 60-second lease
-              leaseToken,
-              processingStartedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-
-            return { ...data, id: freshOp.id, leaseToken };
-          });
-        } catch (lockErr: any) {
-          console.warn(`[ReconciliationWorker] Lock contention for operation ${doc.id}: ${lockErr.message}`);
-          continue;
-        }
-
-        if (!opData) {
-          continue;
-        }
-
-        const activeLeaseToken = opData.leaseToken;
-        const recordId = opData.recordId || doc.id;
-        const patientId = opData.patientId;
-        const planId = opData.planId;
-        const recordType = opData.recordType || 'TREATMENT_TASK_COMPLETION';
-
-        // 3. Validate Required Operation Fields
-        if (!patientId || !planId || !recordId || !opData.sourceDocPath) {
-          console.error(`[ReconciliationWorker] Incomplete operation record '${doc.id}'`);
-          await db.runTransaction(async (t) => {
-            const curr = await t.get(opRef);
-            if (!curr.exists) return;
-            if (curr.data()?.leaseToken !== activeLeaseToken) return;
-            t.update(opRef, {
-              status: 'FAILED_PERMANENT',
-              error: 'Missing required operation fields (patientId, planId, recordId, or sourceDocPath)',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          });
-          failed++;
-          continue;
-        }
-
-        // Resolve and Fetch Authoritative Source Document
-        const sourceDocPath = opData.sourceDocPath;
-        const sourceRef = db.doc(sourceDocPath);
-        const sourceSnap = await sourceRef.get();
-
-        if (!sourceSnap.exists) {
-          console.error(`[ReconciliationWorker] Source document not found at: ${sourceDocPath}`);
-          await db.runTransaction(async (t) => {
-            const curr = await t.get(opRef);
-            if (!curr.exists) return;
-            if (curr.data()?.leaseToken !== activeLeaseToken) return;
-            t.update(opRef, {
-              status: 'FAILED_PERMANENT',
-              error: 'Source clinical document not found',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          });
-          failed++;
-          continue;
-        }
-
-        const sourceData = sourceSnap.data() as Record<string, any>;
-
-        // 4. Validate Cross-Patient / Cross-Plan Substitution Boundary
-        if (sourceData.patientId !== patientId || sourceData.planId !== planId) {
-          console.error(
-            `[SECURITY] Cross-patient/plan mismatch for operation '${doc.id}': source (${sourceData.patientId}/${sourceData.planId}) != op (${patientId}/${planId})`
-          );
-          await db.runTransaction(async (t) => {
-            const curr = await t.get(opRef);
-            if (!curr.exists) return;
-            if (curr.data()?.leaseToken !== activeLeaseToken) return;
-            t.update(opRef, {
-              status: 'FAILED_PERMANENT',
-              error: 'Security violation: Cross-patient or cross-plan document substitution detected',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          });
-          failed++;
-          continue;
-        }
-
-        // 5. Validate Finalization and Eligibility
-        if (recordType === 'TREATMENT_TASK_COMPLETION') {
-          if (sourceData.status !== 'completed' || !sourceData.completedAt) {
-            console.warn(`[ReconciliationWorker] Task '${recordId}' is not finalized (status: ${sourceData.status})`);
-            await db.runTransaction(async (t) => {
-              const curr = await t.get(opRef);
-              if (!curr.exists) return;
-              if (curr.data()?.leaseToken !== activeLeaseToken) return;
-              t.update(opRef, {
-                status: 'FAILED_RETRYABLE',
-                nextRetryAt: Date.now() + 30000,
-                error: 'Source task not yet completed or timestamp pending'
-              });
-            });
-            failed++;
-            continue;
-          }
-        }
-
-        // 6. Calculate Canonical SHA-256 Digest from Resolved Persisted Record
-        let calculatedHash = '';
-        if (recordType === 'TREATMENT_TASK_COMPLETION') {
-          calculatedHash = this.recordService.computeCanonicalTaskHash(sourceData);
-        } else {
-          calculatedHash = this.recordService.computeCanonicalProgressHash(sourceData);
-        }
-
-        // Tamper detection against queued hash (if provided) or previously recorded hash
-        if (opData.canonicalHash && opData.canonicalHash.toLowerCase() !== calculatedHash.toLowerCase()) {
-          console.error(
-            `[SECURITY] Tamper detected for operation '${doc.id}': op hash '${opData.canonicalHash}' != recomputed '${calculatedHash}'`
-          );
-          await db.runTransaction(async (t) => {
-            const curr = await t.get(opRef);
-            if (!curr.exists) return;
-            if (curr.data()?.leaseToken !== activeLeaseToken) return;
-            t.update(opRef, {
-              status: 'FAILED_PERMANENT',
-              error: 'Canonical hash mismatch / content tampering detected',
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-          });
-          failed++;
-          continue;
-        }
-
-        // 6. Generate Deterministic Domain-Separated Opaque Ledger Key
-        const domainRecordId =
-          recordType === 'TREATMENT_TASK_COMPLETION'
-            ? `task_${planId}_${recordId}`
-            : `tp_${planId}_${recordId}`;
-        const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(patientId, domainRecordId);
-
-        // 7. Check Existing Ledger Proof (Idempotent Recovery)
-        let alreadyCommitted = false;
-        try {
-          const proofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
-          if (proofStr && proofStr.trim() !== '') {
-            const existingProof = JSON.parse(proofStr);
-            if (
-              existingProof.sha256Hash &&
-              existingProof.sha256Hash.toLowerCase() === calculatedHash.toLowerCase()
-            ) {
-              let fenced = false;
-              await db.runTransaction(async (t) => {
-                const freshOp = await t.get(opRef);
-                if (!freshOp.exists) return;
-                const currOp = freshOp.data() as Record<string, any>;
-                if (currOp.leaseToken !== activeLeaseToken) return;
-
-                t.update(sourceRef, {
-                  fabricStatus: 'COMMITTED',
-                  fabricTxId: existingProof.txId,
-                  fabricVersion: existingProof.version || 1,
-                  fabricTimestamp: existingProof.timestamp,
-                  fileHash: calculatedHash,
-                  opaqueRecordKey,
-                  lastAnchoredAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-
-                t.update(opRef, {
-                  status: 'COMMITTED',
-                  fabricTxId: existingProof.txId,
-                  fabricVersion: existingProof.version || 1,
-                  fabricTimestamp: existingProof.timestamp,
-                  payloadHash: calculatedHash,
-                  opaqueRecordKey,
-                  committedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                fenced = true;
-              });
-
-              if (fenced) {
-                alreadyCommitted = true;
-                committed++;
-              }
-            }
-          }
-        } catch (_) {
-          // Record not yet on ledger — proceed to anchor
-        }
-
-        if (alreadyCommitted) {
-          continue;
-        }
-
-        // 8. Submit AnchorRecordHash to Hyperledger Fabric
-        try {
-          const metadata = {
-            documentType: 'TREATMENT_PLAN',
-            recordType: recordType.toUpperCase(),
-            schemaVersion: '1.0'
-          };
-
-          const { result, txId } = await this.fabricGateway.submitTransaction(
-            'AnchorRecordHash',
-            opaqueRecordKey,
-            calculatedHash,
-            JSON.stringify(metadata)
-          );
-
-          const proof = JSON.parse(result);
-
-          // 9. Verify Transaction Commit on Ledger
-          const verifyStr = await this.fabricGateway.evaluateTransaction(
-            'VerifyRecordHash',
-            opaqueRecordKey,
-            calculatedHash
-          );
-          const verifyResult = JSON.parse(verifyStr);
-          if (!verifyResult.verified) {
-            throw new Error(`Ledger verification failed with status: ${verifyResult.status}`);
-          }
-
-          // 10. Update Firestore Documents Atomically with Lease Fencing Validation
-          const committedProof = {
-            txId: proof.txId || txId,
-            fileHash: calculatedHash,
-            version: proof.version || 1,
-            timestamp: proof.timestamp,
-            opaqueRecordKey
-          };
-
-          let fencedCommit = false;
-          await db.runTransaction(async (t) => {
-            const freshOp = await t.get(opRef);
-            if (!freshOp.exists) throw new Error('Operation record deleted');
-            const currOp = freshOp.data() as Record<string, any>;
-            if (currOp.leaseToken !== activeLeaseToken) {
-              throw new Error(
-                `STALE_LEASE_FENCE: Worker lease token '${activeLeaseToken}' expired or superseded by '${currOp.leaseToken}'. Aborting stale commit update.`
-              );
-            }
-
-            t.update(sourceRef, {
-              fabricStatus: 'COMMITTED',
-              fabricTxId: committedProof.txId,
-              fabricVersion: committedProof.version,
-              fabricTimestamp: committedProof.timestamp,
-              fileHash: calculatedHash,
-              opaqueRecordKey,
-              lastAnchoredAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-
-            t.update(opRef, {
-              status: 'COMMITTED',
-              fabricTxId: committedProof.txId,
-              fabricVersion: committedProof.version,
-              fabricTimestamp: committedProof.timestamp,
-              payloadHash: calculatedHash,
-              opaqueRecordKey,
-              committedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            fencedCommit = true;
-          });
-
-          if (fencedCommit) {
-            committed++;
-          }
-        } catch (err: any) {
-          console.warn(
-            `[ReconciliationWorker] Anchoring attempt failed for treatment operation '${recordId}': ${err.message}`
-          );
-
-          try {
-            await db.runTransaction(async (t) => {
-              const freshOp = await t.get(opRef);
-              if (!freshOp.exists) return;
-              const currOp = freshOp.data() as Record<string, any>;
-              if (currOp.leaseToken !== activeLeaseToken) {
-                return;
-              }
-              const retryCount = (currOp.retryCount || 0) + 1;
-              const isPermanent = retryCount >= 5;
-              const nextRetryDelayMs = Math.min(300000, Math.pow(2, retryCount) * 5000);
-              const nextRetryAt = Date.now() + nextRetryDelayMs;
-
-              t.update(opRef, {
-                status: isPermanent ? 'FAILED_PERMANENT' : 'FAILED_RETRYABLE',
-                retryCount,
-                nextRetryAt,
-                error: err.message || 'Unknown Fabric submission failure',
-                lastFailedAt: admin.firestore.FieldValue.serverTimestamp()
-              });
-
-              t.update(sourceRef, {
-                fabricStatus: isPermanent ? 'FAILED_PERMANENT' : 'FAILED_RETRYABLE',
-                fabricError: err.message || 'Unknown Fabric submission failure'
-              });
-            });
-          } catch (fErr: any) {
-            console.warn(`[ReconciliationWorker] Failed to record failure state: ${fErr.message}`);
-          }
-          failed++;
-        }
-      }
-    } finally {
-      this.isReconcilingTreatment = false;
-    }
-
-    return { processed, committed, failed };
-  }
+  public reconcilePendingClinicalNotes(): Promise<Summary> { return this.reconcile(false); }
+  public reconcilePendingTreatmentOperations(): Promise<Summary> { return this.reconcile(true); }
 }

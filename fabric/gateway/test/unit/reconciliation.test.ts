@@ -1,12 +1,15 @@
 // test/unit/reconciliation.test.ts
 import { expect } from 'chai';
+import { MemoryFirestore } from '../helpers/memoryFirestore';
 import { ReconciliationService } from '../../src/services/reconciliationService';
 
 describe('ReconciliationService Unit Tests (Concurrency & Idempotency)', () => {
   let reconciliation: ReconciliationService;
+  let newDatabase: any;
 
   beforeEach(() => {
-    reconciliation = ReconciliationService.getInstance();
+    newDatabase = new MemoryFirestore();
+    reconciliation = new ReconciliationService({ getFirestoreInstance: () => newDatabase } as any);
   });
 
   it('should acquire and release concurrency lock successfully', () => {
@@ -22,14 +25,15 @@ describe('ReconciliationService Unit Tests (Concurrency & Idempotency)', () => {
   });
 
   it('should track durable operation lifecycle and status transitions', async () => {
-    const opId = 'op-rec-001';
-    const op = await reconciliation.startOperation(opId, 'ANCHOR_RECORD', 'entity-1', 'idem-key-1');
+    const opId = `op-rec-${Date.now()}`;
+    const idemKey = `idem-key-${Date.now()}`;
+    const op = await reconciliation.startOperation(opId, 'ANCHOR_RECORD', 'entity-1', idemKey);
 
     expect(op.status).to.equal('PENDING');
     expect(op.operationId).to.equal(opId);
 
     // Look up by idempotency key
-    const retrieved = reconciliation.getByIdempotencyKey('idem-key-1');
+    const retrieved = reconciliation.getByIdempotencyKey(idemKey);
     expect(retrieved).to.exist;
     expect(retrieved?.operationId).to.equal(opId);
 
@@ -82,8 +86,7 @@ describe('ReconciliationService Unit Tests (Concurrency & Idempotency)', () => {
       }
     };
 
-    const { FirebaseAdminService } = await import('../../src/services/firebaseAdmin');
-    FirebaseAdminService.getInstance().setMockInstances(null, mockFirestore, null);
+    newDatabase = mockFirestore;
 
     try {
       await reconciliation.startOperation(opId, 'ANCHOR_RECORD', 'rec-race-1');
@@ -93,12 +96,12 @@ describe('ReconciliationService Unit Tests (Concurrency & Idempotency)', () => {
     }
   });
 
-  it('should safely permit retry when prior operation is UNCERTAIN_RETRYABLE or FAILED', async () => {
+  it('should permit a deliberate retry only when the prior operation is definitively FAILED', async () => {
     const opId = 'op-rec-retryable';
     const operationsStore = new Map<string, any>();
     operationsStore.set(opId, {
       operationId: opId,
-      status: 'UNCERTAIN_RETRYABLE',
+      status: 'FAILED',
       updatedAt: new Date().toISOString(),
       attempts: 1
     });
@@ -122,8 +125,7 @@ describe('ReconciliationService Unit Tests (Concurrency & Idempotency)', () => {
       }
     };
 
-    const { FirebaseAdminService } = await import('../../src/services/firebaseAdmin');
-    FirebaseAdminService.getInstance().setMockInstances(null, mockFirestore, null);
+    newDatabase = mockFirestore;
 
     const retried = await reconciliation.startOperation(opId, 'ANCHOR_RECORD', 'rec-retry-1');
     expect(retried.status).to.equal('PENDING');
