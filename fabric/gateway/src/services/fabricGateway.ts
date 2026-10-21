@@ -6,6 +6,23 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config/env';
 
+export class ConsentSubmissionError extends Error {
+  constructor(public readonly outcome: 'NOT_SUBMITTED' | 'REJECTED' | 'UNCERTAIN') {
+    super(`Consent transaction outcome: ${outcome}`);
+  }
+}
+
+/** Stage evidence for record bookkeeping; HTTP status alone is not commit evidence. */
+export class RecordSubmissionError extends Error {
+  constructor(
+    public readonly outcome: 'NOT_SUBMITTED' | 'REJECTED' | 'UNCERTAIN',
+    public readonly txId: string | undefined,
+    cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : 'Fabric record submission failed.', { cause });
+  }
+}
+
 export class FabricGatewayService {
   private static instance: FabricGatewayService | null = null;
   private gateway: Gateway | null = null;
@@ -119,6 +136,27 @@ export class FabricGatewayService {
    * and verifies commit status across endorsing peers.
    */
   public async submitTransaction(name: string, ...args: string[]): Promise<{ result: string; txId?: string }> {
+    if (name === 'AnchorRecordHash') {
+      let txId: string | undefined;
+      let dispatched = false;
+      try {
+        const proposal = this.getContract().newProposal(name, { arguments: args });
+        txId = proposal.getTransactionId();
+        if (!txId) throw new Error('Missing Fabric proposal transaction ID.');
+        const transaction = await proposal.endorse();
+        dispatched = true; // A submit exception can occur after the orderer accepted it.
+        const commit = await transaction.submit();
+        const status = await commit.getStatus();
+        if (!status.successful) {
+          throw new RecordSubmissionError('REJECTED', txId,
+            new Error(`Fabric transaction commit rejected with status code: ${status.code}`));
+        }
+        return { result: Buffer.from(transaction.getResult()).toString('utf8'), txId };
+      } catch (error) {
+        if (error instanceof RecordSubmissionError) throw error;
+        throw new RecordSubmissionError(dispatched ? 'UNCERTAIN' : 'NOT_SUBMITTED', txId, error);
+      }
+    }
     const contract = this.getContract();
     // Use contract.newProposal to capture the proposed transaction ID
     const proposal = contract.newProposal(name, { arguments: args });
@@ -133,6 +171,28 @@ export class FabricGatewayService {
 
     const result = Buffer.from(transaction.getResult()).toString('utf8');
     return { result, txId };
+  }
+
+  /** Consent-only staged dispatch. Persist the real txId BEFORE any submit can occur. */
+  public async submitConsentTransaction(
+    name: 'GrantConsent' | 'RevokeConsent', args: string[], prepared: (txId: string) => Promise<void>
+  ): Promise<{ result: string; txId: string }> {
+    let dispatched = false;
+    try {
+      const proposal = this.getContract().newProposal(name, { arguments: args });
+      const txId = proposal.getTransactionId();
+      if (!txId) throw new Error('Missing Fabric proposal transaction ID.');
+      await prepared(txId);
+      const transaction = await proposal.endorse();
+      dispatched = true;
+      const commit = await transaction.submit();
+      const status = await commit.getStatus();
+      if (!status.successful) throw new ConsentSubmissionError('REJECTED');
+      return { result: Buffer.from(transaction.getResult()).toString('utf8'), txId };
+    } catch (err) {
+      if (err instanceof ConsentSubmissionError) throw err;
+      throw new ConsentSubmissionError(dispatched ? 'UNCERTAIN' : 'NOT_SUBMITTED');
+    }
   }
 
   public isConnected(): boolean {

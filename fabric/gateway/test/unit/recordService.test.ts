@@ -2,7 +2,7 @@
 import { expect } from 'chai';
 import crypto from 'crypto';
 import sinon from 'sinon';
-import { RecordService } from '../../src/services/recordService';
+import { RecordService, canonicalJsonStringify } from '../../src/services/recordService';
 import { AuthenticatedUser } from '../../src/types';
 
 describe('RecordService Unit Tests', () => {
@@ -146,7 +146,9 @@ describe('RecordService Unit Tests', () => {
       mockFirebaseAdmin.getFileBytes.resolves(MOCK_FILE_CONTENT);
 
       // Ledger has no existing proof for this key
-      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('Record not found'));
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').callsFake(async (_name: string, key: string) => {
+        throw { code: 2, details: [{ message: `chaincode response 500, Record '${key}' does not exist on ledger.` }] };
+      });
 
       // Ledger submits AnchorRecordHash
       const mockChaincodeProof = {
@@ -584,7 +586,9 @@ describe('RecordService Unit Tests', () => {
 
       mockFirebaseAdmin.getMedicalRecord.resolves(mockNote);
       mockFirebaseAdmin.checkActiveNurseAssignment.resolves(true);
-      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('not found'));
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').callsFake(async (_name: string, key: string) => {
+        throw { code: 2, details: [{ message: `chaincode response 500, Record '${key}' does not exist on ledger.` }] };
+      });
 
       const noteHash = recordService.computeCanonicalClinicalNoteHash(mockNote);
       expect(noteHash).to.have.lengthOf(64);
@@ -663,4 +667,286 @@ describe('RecordService Unit Tests', () => {
       expect(res.targetHash).to.equal(noteHash);
     });
   });
+
+  describe('Prescription Integrity Hashing (Schema 2.0 & Legacy Schema 1.0)', () => {
+    const BASE_PRESCRIPTION = {
+      id: 'rx_synthetic_001',
+      patientId: 'patient-123',
+      type: 'prescription',
+      subtype: 'Digital Prescription',
+      facility: 'OncoVault Oncology Center',
+      summary: 'Cisplatin 500mg Oral Twice Daily',
+      doctorId: 'doc_oncologist_99',
+      doctorName: 'Dr. Sarah Connor',
+      dateIso: '2026-10-20T10:00:00.000Z',
+      additionalNotes: 'Hydrate well with 2L water daily',
+      followUpInstructions: 'Return in 14 days for renal panel',
+      prescriptionData: {
+        drugs: [
+          {
+            name: 'Cisplatin',
+            dosage: '500mg',
+            frequency: 'Twice Daily',
+            duration: '14 days',
+            route: 'Oral',
+            instructions: 'Take after meals'
+          }
+        ]
+      }
+    };
+
+    it('1. should deterministically compute identical hash regardless of object property ordering', () => {
+      const rxReordered = {
+        summary: BASE_PRESCRIPTION.summary,
+        type: BASE_PRESCRIPTION.type,
+        facility: BASE_PRESCRIPTION.facility,
+        patientId: BASE_PRESCRIPTION.patientId,
+        id: BASE_PRESCRIPTION.id,
+        prescriptionData: {
+          drugs: [
+            {
+              instructions: 'Take after meals',
+              route: 'Oral',
+              duration: '14 days',
+              frequency: 'Twice Daily',
+              dosage: '500mg',
+              name: 'Cisplatin'
+            }
+          ]
+        },
+        doctorName: BASE_PRESCRIPTION.doctorName,
+        doctorId: BASE_PRESCRIPTION.doctorId,
+        dateIso: BASE_PRESCRIPTION.dateIso,
+        subtype: BASE_PRESCRIPTION.subtype,
+        followUpInstructions: BASE_PRESCRIPTION.followUpInstructions,
+        additionalNotes: BASE_PRESCRIPTION.additionalNotes
+      };
+
+      const hash1 = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hash2 = recordService.computeCanonicalPrescriptionHash(rxReordered);
+      expect(hash1).to.equal(hash2);
+      expect(hash1).to.have.lengthOf(64);
+    });
+
+    it('2. should alter hash when medication name changes (Cisplatin -> Carboplatin)', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].name = 'Carboplatin';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('3. should alter hash when medication dosage changes (500mg -> 100mg)', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].dosage = '100mg';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('4. should alter hash when medication frequency changes (Twice Daily -> Once Daily)', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].frequency = 'Once Daily';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('5. should alter hash when medication duration changes (14 days -> 28 days)', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].duration = '28 days';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('6. should alter hash when administration route changes (Oral -> IV)', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].route = 'IV';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('7. should alter hash when medication instructions change', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.prescriptionData.drugs[0].instructions = 'Take on empty stomach';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('8. should alter hash when a second drug is added to multi-drug array', () => {
+      const multiDrug = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      multiDrug.prescriptionData.drugs.push({
+        name: 'Ondansetron',
+        dosage: '8mg',
+        frequency: 'Every 8 hours PRN',
+        duration: '3 days',
+        route: 'Oral',
+        instructions: 'For nausea'
+      });
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hMulti = recordService.computeCanonicalPrescriptionHash(multiDrug);
+      expect(hOriginal).to.not.equal(hMulti);
+    });
+
+    it('9. should alter hash when prescribing doctor name changes', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.doctorName = 'Dr. Gregory House';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('10. should alter hash when prescribing doctor ID changes', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.doctorId = 'doc_impostor_66';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('11. should alter hash when prescription date changes', () => {
+      const tampered = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tampered.dateIso = '2026-10-21T10:00:00.000Z';
+
+      const hOriginal = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+      const hTampered = recordService.computeCanonicalPrescriptionHash(tampered);
+      expect(hOriginal).to.not.equal(hTampered);
+    });
+
+    it('12. should verify legacy Schema 1.0 prescription with status LEGACY_METADATA_VERIFIED', async () => {
+      const legacyRecord = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      // In Schema 1.0, only metadata was anchored
+      const legacyHash = recordService.computeCanonicalMetadataHash(legacyRecord);
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(legacyRecord);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rx_opaque_legacy_001',
+        sha256Hash: legacyHash,
+        version: 1,
+        txId: 'tx-legacy-rx-001',
+        timestamp: '2026-10-17T00:00:00.000Z',
+        metadata: {
+          documentType: 'PRESCRIPTION',
+          schemaVersion: '1.0'
+        }
+      }));
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: true,
+        status: 'VERIFIED',
+        sha256Hash: legacyHash
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, BASE_PRESCRIPTION.id);
+      expect(res.verified).to.be.true;
+      expect(res.status).to.equal('LEGACY_METADATA_VERIFIED');
+      expect(res.schemaVersion).to.equal('1.0');
+      expect(res.comprehensiveDrugIntegrity).to.be.false;
+      expect(res.message).to.include('Legacy metadata verified against ledger proof');
+    });
+
+    it('13. should detect tampering on legacy Schema 1.0 prescription when metadata is altered', async () => {
+      const tamperedLegacy = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      tamperedLegacy.summary = 'Altered summary not on ledger';
+      const originalLegacyHash = recordService.computeCanonicalMetadataHash(BASE_PRESCRIPTION);
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(tamperedLegacy);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rx_opaque_legacy_001',
+        sha256Hash: originalLegacyHash,
+        version: 1,
+        txId: 'tx-legacy-rx-001',
+        metadata: {
+          documentType: 'PRESCRIPTION',
+          schemaVersion: '1.0'
+        }
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, BASE_PRESCRIPTION.id);
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.schemaVersion).to.equal('1.0');
+      expect(res.comprehensiveDrugIntegrity).to.be.false;
+    });
+
+    it('14. should verify Schema 2.0 prescription as VERIFIED with comprehensiveDrugIntegrity = true', async () => {
+      const schema2Record = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      const schema2Hash = recordService.computeCanonicalPrescriptionHash(schema2Record);
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(schema2Record);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rx_opaque_s2_001',
+        sha256Hash: schema2Hash,
+        version: 1,
+        txId: 'tx-s2-rx-001',
+        timestamp: '2026-10-20T12:00:00.000Z',
+        metadata: {
+          documentType: 'PRESCRIPTION',
+          schemaVersion: '2.0'
+        }
+      }));
+      mockFabricGateway.evaluateTransaction.withArgs('VerifyRecordHash').resolves(JSON.stringify({
+        verified: true,
+        status: 'VERIFIED',
+        sha256Hash: schema2Hash
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, BASE_PRESCRIPTION.id);
+      expect(res.verified).to.be.true;
+      expect(res.status).to.equal('VERIFIED');
+      expect(res.schemaVersion).to.equal('2.0');
+      expect(res.comprehensiveDrugIntegrity).to.be.true;
+      expect(res.message).to.include('immutable Hyperledger Fabric ledger');
+    });
+
+    it('15. should detect tampering on Schema 2.0 prescription when drug dosage is altered', async () => {
+      const tamperedRecord = JSON.parse(JSON.stringify(BASE_PRESCRIPTION));
+      // Clinical tamper: change drug dosage while leaving metadata/summary untouched
+      tamperedRecord.prescriptionData.drugs[0].dosage = '1000mg';
+      const honestSchema2Hash = recordService.computeCanonicalPrescriptionHash(BASE_PRESCRIPTION);
+
+      mockFirebaseAdmin.getMedicalRecord.resolves(tamperedRecord);
+      mockFabricGateway.evaluateTransaction.withArgs('GetRecordProof').resolves(JSON.stringify({
+        recordId: 'rx_opaque_s2_001',
+        sha256Hash: honestSchema2Hash,
+        version: 1,
+        txId: 'tx-s2-rx-001',
+        metadata: {
+          documentType: 'PRESCRIPTION',
+          schemaVersion: '2.0'
+        }
+      }));
+
+      const res = await recordService.verifyRecord(PATIENT_USER, BASE_PRESCRIPTION.id);
+      expect(res.verified).to.be.false;
+      expect(res.status).to.equal('TAMPERED_OR_MISMATCH');
+      expect(res.schemaVersion).to.equal('2.0');
+      expect(res.comprehensiveDrugIntegrity).to.be.false;
+      expect(res.message).to.include('Authoritative clinical content SHA-256 digest differs from on-chain proof');
+    });
+
+    it('16. (Anti-IDOR Gate) should reject unauthorized caller attempting to verify another patient prescription', async () => {
+      const INTRUDER: AuthenticatedUser = { uid: 'intruder-999', role: 'patient', email: 'intruder@evil.com' };
+      mockFirebaseAdmin.getMedicalRecord.resolves(BASE_PRESCRIPTION);
+
+      try {
+        await recordService.verifyRecord(INTRUDER, BASE_PRESCRIPTION.id);
+        expect.fail('Should have rejected unauthorized patient');
+      } catch (err: any) {
+        expect(err.message).to.include('Patients may only access their own medical records');
+      }
+    });
+  });
+
 });

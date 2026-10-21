@@ -110,6 +110,19 @@ router.post(
   }
 );
 
+/** Explicit recovery: Fabric evaluation + confirmed projection only; never a ledger write. */
+router.post('/reconcile', authenticate(), requireRole('patient'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const parsed = revokeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid recovery request.' } });
+      return;
+    }
+    const result = await consentService.reconcileConsent(req.user!, parsed.data.providerId, parsed.data.scope);
+    res.status(200).json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
 /**
  * GET /api/v1/consent/check
  * Evaluates active consent status on the Fabric ledger.

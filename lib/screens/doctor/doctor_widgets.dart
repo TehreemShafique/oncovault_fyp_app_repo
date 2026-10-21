@@ -1,5 +1,6 @@
 // lib/screens/doctor/doctor_widgets.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_theme.dart';
 import '../../models/appointment_model.dart';
@@ -12,30 +13,46 @@ class DStatusBadge extends StatelessWidget {
 
   Color get bg {
     switch (status) {
-      case AppointmentStatus.confirmed:   return OV.tertiaryContainer;
-      case AppointmentStatus.scheduled:   return const Color(0xFFFFF3E0);
-      case AppointmentStatus.cancelled:   return OV.errorContainer;
-      case AppointmentStatus.rejected:    return OV.errorContainer;
-      case AppointmentStatus.completed:   return OV.secondaryContainer;
-      case AppointmentStatus.rescheduled: return OV.primaryContainer;
+      case AppointmentStatus.confirmed:
+        return OV.tertiaryContainer;
+      case AppointmentStatus.scheduled:
+        return const Color(0xFFFFF3E0);
+      case AppointmentStatus.cancelled:
+        return OV.errorContainer;
+      case AppointmentStatus.rejected:
+        return OV.errorContainer;
+      case AppointmentStatus.completed:
+        return OV.secondaryContainer;
+      case AppointmentStatus.rescheduled:
+        return OV.primaryContainer;
     }
   }
+
   Color get fg {
     switch (status) {
-      case AppointmentStatus.confirmed:   return OV.tertiary;
-      case AppointmentStatus.scheduled:   return const Color(0xFF8B5000);
-      case AppointmentStatus.cancelled:   return OV.error;
-      case AppointmentStatus.rejected:    return OV.error;
-      case AppointmentStatus.completed:   return OV.secondary;
-      case AppointmentStatus.rescheduled: return OV.primary;
+      case AppointmentStatus.confirmed:
+        return OV.tertiary;
+      case AppointmentStatus.scheduled:
+        return const Color(0xFF8B5000);
+      case AppointmentStatus.cancelled:
+        return OV.error;
+      case AppointmentStatus.rejected:
+        return OV.error;
+      case AppointmentStatus.completed:
+        return OV.secondary;
+      case AppointmentStatus.rescheduled:
+        return OV.primary;
     }
   }
+
   @override
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
       child: Text(status.label,
-          style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: fg)));
+          style: GoogleFonts.inter(
+              fontSize: 11, fontWeight: FontWeight.w700, color: fg)));
 }
 
 // ── Patient Status Chip (Stable / Monitoring / Critical) ──────────────────────
@@ -45,27 +62,38 @@ class PatientStatusChip extends StatelessWidget {
 
   Color get bg {
     switch (status.toLowerCase()) {
-      case 'stable':    return OV.tertiaryContainer;
-      case 'critical':  return OV.errorContainer;
-      case 'follow-up': return const Color(0xFFFFF3E0);
-      default:          return OV.primaryContainer;
+      case 'stable':
+        return OV.tertiaryContainer;
+      case 'critical':
+        return OV.errorContainer;
+      case 'follow-up':
+        return const Color(0xFFFFF3E0);
+      default:
+        return OV.primaryContainer;
     }
   }
+
   Color get fg {
     switch (status.toLowerCase()) {
-      case 'stable':    return OV.tertiary;
-      case 'critical':  return OV.error;
-      case 'follow-up': return const Color(0xFF8B5000);
-      default:          return OV.primary;
+      case 'stable':
+        return OV.tertiary;
+      case 'critical':
+        return OV.error;
+      case 'follow-up':
+        return const Color(0xFF8B5000);
+      default:
+        return OV.primary;
     }
   }
 
   @override
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
       child: Text(status,
-          style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700, color: fg)));
+          style: GoogleFonts.inter(
+              fontSize: 10, fontWeight: FontWeight.w700, color: fg)));
 }
 
 // ── Severity Badge ────────────────────────────────────────────────────────────
@@ -75,29 +103,43 @@ class SeverityBadge extends StatelessWidget {
 
   Color get color {
     switch (severity.toLowerCase()) {
-      case 'high':   return OV.error;
-      case 'medium': return const Color(0xFF8B5000);
-      default:       return OV.tertiary;
+      case 'high':
+        return OV.error;
+      case 'medium':
+        return const Color(0xFF8B5000);
+      default:
+        return OV.tertiary;
     }
   }
+
   Color get bg {
     switch (severity.toLowerCase()) {
-      case 'high':   return OV.errorContainer;
-      case 'medium': return const Color(0xFFFFF3E0);
-      default:       return OV.tertiaryContainer;
+      case 'high':
+        return OV.errorContainer;
+      case 'medium':
+        return const Color(0xFFFFF3E0);
+      default:
+        return OV.tertiaryContainer;
     }
   }
 
   @override
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 6, height: 6, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
         Text(severity.toUpperCase(),
-            style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w800,
-                letterSpacing: 0.5, color: color)),
+            style: GoogleFonts.inter(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+                color: color)),
       ]));
 }
 
@@ -106,8 +148,8 @@ class DoctorAppBar extends StatelessWidget {
   final String title;
   final bool showBack;
   final List<Widget>? actions;
-  const DoctorAppBar({super.key, required this.title,
-    this.showBack = false, this.actions});
+  const DoctorAppBar(
+      {super.key, required this.title, this.showBack = false, this.actions});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -116,22 +158,40 @@ class DoctorAppBar extends StatelessWidget {
         if (showBack) ...[
           GestureDetector(
               onTap: () => Navigator.pop(context),
-              child: Container(padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: OV.outlineVariant.withOpacity(0.5))),
-                  child: const Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: OV.onSurface))),
+              child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: OV.outlineVariant.withOpacity(0.5))),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      size: 16, color: OV.onSurface))),
           const SizedBox(width: 12),
         ],
-        if (!showBack) Row(children: [
-          Container(padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(color: OV.primary.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-              child: Icon(Icons.grid_view_rounded, color: OV.primary, size: 16)),
-          const SizedBox(width: 8),
-          Text('OncoVault', style: GoogleFonts.manrope(
-              fontSize: 16, fontWeight: FontWeight.w700, color: OV.primary)),
-        ]),
-        if (showBack) Expanded(child: Text(title, style: GoogleFonts.manrope(
-            fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface))),
+        if (!showBack)
+          Row(children: [
+            Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                    color: OV.primary.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8)),
+                child:
+                    Icon(Icons.grid_view_rounded, color: OV.primary, size: 16)),
+            const SizedBox(width: 8),
+            Text('OncoVault',
+                style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: OV.primary)),
+          ]),
+        if (showBack)
+          Expanded(
+              child: Text(title,
+                  style: GoogleFonts.manrope(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: OV.onSurface))),
         if (!showBack) const Spacer(),
         if (actions != null) ...actions!,
       ]));
@@ -143,8 +203,12 @@ class DCard extends StatelessWidget {
   final EdgeInsets? padding;
   final VoidCallback? onTap;
   final double radius;
-  const DCard({super.key, required this.child, this.padding,
-    this.onTap, this.radius = 16});
+  const DCard(
+      {super.key,
+      required this.child,
+      this.padding,
+      this.onTap,
+      this.radius = 16});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -154,22 +218,34 @@ class DCard extends StatelessWidget {
           decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(radius),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
-                  blurRadius: 10, offset: const Offset(0, 3))]),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3))
+              ]),
           child: child));
 }
 
 // ── Icon Bubble ───────────────────────────────────────────────────────────────
 class IconBubble extends StatelessWidget {
-  final IconData icon; final Color bg; final Color iconColor;
+  final IconData icon;
+  final Color bg;
+  final Color iconColor;
   final double size;
-  const IconBubble({super.key, required this.icon, required this.bg,
-    required this.iconColor, this.size = 44});
+  const IconBubble(
+      {super.key,
+      required this.icon,
+      required this.bg,
+      required this.iconColor,
+      this.size = 44});
 
   @override
   Widget build(BuildContext context) => Container(
-      width: size, height: size,
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(size * 0.3)),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+          color: bg, borderRadius: BorderRadius.circular(size * 0.3)),
       child: Icon(icon, color: iconColor, size: size * 0.5));
 }
 
@@ -180,7 +256,7 @@ class BlockchainBadge extends StatelessWidget {
 
   const BlockchainBadge({
     super.key,
-    this.status = FabricVerificationStatus.verified,
+    this.status = FabricVerificationStatus.pending,
     this.onTap,
   });
 
@@ -199,6 +275,13 @@ class BlockchainBadge extends StatelessWidget {
         fg = const Color(0xFF16A34A);
         icon = Icons.verified_rounded;
         label = 'Blockchain Verified';
+        break;
+      case FabricVerificationStatus.legacyMetadataVerified:
+        bg = const Color(0xFFFEF3C7);
+        border = const Color(0xFFF59E0B);
+        fg = const Color(0xFFB45309);
+        icon = Icons.shield_outlined;
+        label = 'Legacy Metadata Verified — Medication Details Not Covered';
         break;
       case FabricVerificationStatus.tamperedOrMismatch:
         bg = const Color(0xFFFEF2F2);
@@ -250,7 +333,6 @@ class BlockchainBadge extends StatelessWidget {
                 fontWeight: FontWeight.w700,
                 color: fg,
               ),
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -269,28 +351,44 @@ class BlockchainBadge extends StatelessWidget {
 
 // ── Section Header ────────────────────────────────────────────────────────────
 class SectionHeader extends StatelessWidget {
-  final String title; final String? action; final VoidCallback? onAction;
-  const SectionHeader({super.key, required this.title, this.action, this.onAction});
+  final String title;
+  final String? action;
+  final VoidCallback? onAction;
+  const SectionHeader(
+      {super.key, required this.title, this.action, this.onAction});
   @override
-  Widget build(BuildContext context) => Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-    Text(title, style: GoogleFonts.manrope(
-        fontSize: 17, fontWeight: FontWeight.w700, color: OV.onSurface)),
-    if (action != null) GestureDetector(onTap: onAction,
-        child: Row(children: [
-          Text(action!, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: OV.primary)),
-          Icon(Icons.chevron_right_rounded, size: 16, color: OV.primary),
-        ])),
-  ]);
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (_, constraints) {
+        final heading = Text(title,
+            style: GoogleFonts.manrope(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: OV.onSurface));
+        final link = action == null
+            ? null
+            : TextButton(
+                onPressed: onAction,
+                child: Text(action!,
+                    style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: OV.primary)));
+        if (constraints.maxWidth <
+            420 * MediaQuery.textScalerOf(context).scale(14) / 14)
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, if (link != null) link]);
+        return Row(
+            children: [Expanded(child: heading), if (link != null) link]);
+      });
 }
 
-// ── Divider ───────────────────────────────────────────────────────────────────
 class DividerLine extends StatelessWidget {
   final double opacity;
   const DividerLine({super.key, this.opacity = 0.3});
   @override
-  Widget build(BuildContext context) => Container(
-      height: 1, color: OV.outlineVariant.withOpacity(opacity));
+  Widget build(BuildContext context) =>
+      Container(height: 1, color: OV.outlineVariant.withOpacity(opacity));
 }
 
 // ── Page transition ───────────────────────────────────────────────────────────
@@ -302,3 +400,135 @@ PageRoute dSlide(Widget page) => PageRouteBuilder(
           .chain(CurveTween(curve: Curves.easeOutCubic));
       return SlideTransition(position: a.drive(t), child: child);
     });
+
+/// Keeps clinical labels and complete values readable as available width changes.
+class ResponsiveDetailRow extends StatelessWidget {
+  final Widget label, value;
+  const ResponsiveDetailRow(
+      {super.key, required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (_, constraints) {
+        final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        if (constraints.maxWidth < 420 * scale) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [label, const SizedBox(height: 6), value]);
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: label),
+          const SizedBox(width: 16),
+          Expanded(flex: 2, child: value)
+        ]);
+      });
+}
+
+/// Uses columns only where every form field has enough room to remain usable.
+class ResponsiveColumns extends StatelessWidget {
+  final List<Widget> children;
+  final double minimumChildWidth;
+  const ResponsiveColumns(
+      {super.key, required this.children, this.minimumChildWidth = 220});
+  @override
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (_, constraints) {
+        final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        if (constraints.maxWidth <
+            children.length * minimumChildWidth * scale +
+                (children.length - 1) * 12) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 12),
+                  children[i]
+                ]
+              ]);
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const SizedBox(width: 12),
+            Expanded(child: children[i])
+          ]
+        ]);
+      });
+}
+
+class ClinicalProofRow extends StatelessWidget {
+  final String label, value;
+  final bool canCopy;
+  const ClinicalProofRow(
+      {super.key,
+      required this.label,
+      required this.value,
+      this.canCopy = false});
+  @override
+  Widget build(BuildContext context) => ResponsiveDetailRow(
+      label: Text(label,
+          style: GoogleFonts.inter(
+              fontSize: 12, fontWeight: FontWeight.w600, color: OV.outline)),
+      value: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+            child: Text(value,
+                style:
+                    GoogleFonts.robotoMono(fontSize: 11, color: OV.onSurface))),
+        if (canCopy)
+          IconButton(
+              tooltip: 'Copy $label',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('$label copied to clipboard'),
+                    duration: const Duration(seconds: 1),
+                    behavior: SnackBarBehavior.floating));
+              },
+              icon: const Icon(Icons.copy_rounded, size: 14, color: OV.primary))
+      ]));
+}
+
+/// Keeps the existing leading icon, content and action together without squeezing content.
+class ResponsiveActionRow extends StatelessWidget {
+  final Widget leading, body, action;
+  const ResponsiveActionRow(
+      {super.key,
+      required this.leading,
+      required this.body,
+      required this.action});
+  @override
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (_, constraints) {
+        final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        if (constraints.maxWidth < 100)
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                leading,
+                const SizedBox(height: 10),
+                body,
+                const SizedBox(height: 10),
+                action
+              ]);
+        final content = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              leading,
+              const SizedBox(width: 12),
+              Expanded(child: body)
+            ]);
+        if (constraints.maxWidth < 520 * scale)
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                content,
+                const SizedBox(height: 12),
+                Align(alignment: Alignment.centerLeft, child: action)
+              ]);
+        return Row(children: [
+          leading,
+          const SizedBox(width: 12),
+          Expanded(child: body),
+          const SizedBox(width: 12),
+          action
+        ]);
+      });
+}

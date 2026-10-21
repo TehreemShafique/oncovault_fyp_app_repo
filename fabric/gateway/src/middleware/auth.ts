@@ -73,8 +73,8 @@ export function authenticate(injectedAdmin?: FirebaseAdminService) {
 
       (req as any).user = userRecord;
 
-      // Extract optional Idempotency-Key header
-      const idempotencyKey = req.headers['idempotency-key'] as string;
+      // Extract optional Idempotency-Key header (supports X-Idempotency-Key and Idempotency-Key)
+      const idempotencyKey = (req.headers['x-idempotency-key'] || req.headers['idempotency-key']) as string;
       if (idempotencyKey) {
         (req as any).idempotencyKey = idempotencyKey.trim();
       }

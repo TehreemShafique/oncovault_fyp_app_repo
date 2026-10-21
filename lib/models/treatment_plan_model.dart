@@ -93,6 +93,8 @@ class TreatmentPlanModel {
   final String title;
   final String clinicalObjectives;
   final String status;
+  final bool hasRecordedStatus;
+  final bool hasRecordedTaskCounts;
   final DateTime startDate;
   final DateTime? targetEndDate;
   final int totalTasks;
@@ -114,6 +116,8 @@ class TreatmentPlanModel {
     required this.title,
     required this.clinicalObjectives,
     this.status = TreatmentPlanStatus.active,
+    this.hasRecordedStatus = true,
+    this.hasRecordedTaskCounts = true,
     required this.startDate,
     this.targetEndDate,
     this.totalTasks = 0,
@@ -127,13 +131,20 @@ class TreatmentPlanModel {
     this.statusUpdatedByUid,
   }) {
     if (planId.trim().isEmpty) throw ArgumentError('planId cannot be empty');
-    if (patientId.trim().isEmpty) throw ArgumentError('patientId cannot be empty');
-    if (doctorId.trim().isEmpty) throw ArgumentError('doctorId cannot be empty');
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError('patientId cannot be empty');
+    }
+    if (doctorId.trim().isEmpty) {
+      throw ArgumentError('doctorId cannot be empty');
+    }
     if (title.trim().isEmpty) throw ArgumentError('title cannot be empty');
     if (totalTasks < 0) throw ArgumentError('totalTasks cannot be negative');
-    if (completedTasks < 0) throw ArgumentError('completedTasks cannot be negative');
+    if (completedTasks < 0) {
+      throw ArgumentError('completedTasks cannot be negative');
+    }
     if (completedTasks > totalTasks && totalTasks > 0) {
-      throw ArgumentError('completedTasks ($completedTasks) cannot exceed totalTasks ($totalTasks)');
+      throw ArgumentError(
+          'completedTasks ($completedTasks) cannot exceed totalTasks ($totalTasks)');
     }
   }
 
@@ -146,29 +157,31 @@ class TreatmentPlanModel {
   bool get isActive => status.toLowerCase() == TreatmentPlanStatus.active;
   bool get isCompleted => status.toLowerCase() == TreatmentPlanStatus.completed;
   bool get isSuspended => status.toLowerCase() == TreatmentPlanStatus.suspended;
-  bool get isDiscontinued => status.toLowerCase() == TreatmentPlanStatus.discontinued;
+  bool get isDiscontinued =>
+      status.toLowerCase() == TreatmentPlanStatus.discontinued;
 
   Map<String, dynamic> toMap() => {
-    'planId': planId,
-    'patientId': patientId,
-    'doctorId': doctorId,
-    'doctorName': doctorName,
-    'hospitalId': hospitalId,
-    'title': title,
-    'clinicalObjectives': clinicalObjectives,
-    'status': status,
-    'startDate': Timestamp.fromDate(startDate),
-    'targetEndDate': targetEndDate != null ? Timestamp.fromDate(targetEndDate!) : null,
-    'totalTasks': totalTasks,
-    'completedTasks': completedTasks,
-    'createdAt': Timestamp.fromDate(createdAt),
-    'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
-    'fabricTxId': fabricTxId,
-    'fabricStatus': fabricStatus,
-    'fabricTimestamp': fabricTimestamp,
-    'statusReason': statusReason,
-    'statusUpdatedByUid': statusUpdatedByUid,
-  };
+        'planId': planId,
+        'patientId': patientId,
+        'doctorId': doctorId,
+        'doctorName': doctorName,
+        'hospitalId': hospitalId,
+        'title': title,
+        'clinicalObjectives': clinicalObjectives,
+        'status': status,
+        'startDate': Timestamp.fromDate(startDate),
+        'targetEndDate':
+            targetEndDate != null ? Timestamp.fromDate(targetEndDate!) : null,
+        'totalTasks': totalTasks,
+        'completedTasks': completedTasks,
+        'createdAt': Timestamp.fromDate(createdAt),
+        'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+        'fabricTxId': fabricTxId,
+        'fabricStatus': fabricStatus,
+        'fabricTimestamp': fabricTimestamp,
+        'statusReason': statusReason,
+        'statusUpdatedByUid': statusUpdatedByUid,
+      };
 
   factory TreatmentPlanModel.fromMap(Map<String, dynamic> map, [String? id]) {
     return TreatmentPlanModel(
@@ -180,6 +193,10 @@ class TreatmentPlanModel {
       title: map['title'] ?? '',
       clinicalObjectives: map['clinicalObjectives'] ?? '',
       status: map['status'] ?? TreatmentPlanStatus.active,
+      hasRecordedStatus: map['status'] is String &&
+          (map['status'] as String).trim().isNotEmpty,
+      hasRecordedTaskCounts:
+          map['totalTasks'] is num && map['completedTasks'] is num,
       startDate: _parseDateTime(map['startDate']) ?? DateTime.now(),
       targetEndDate: _parseDateTime(map['targetEndDate']),
       totalTasks: (map['totalTasks'] as num?)?.toInt() ?? 0,
@@ -224,6 +241,9 @@ class TreatmentPlanModel {
       title: title ?? this.title,
       clinicalObjectives: clinicalObjectives ?? this.clinicalObjectives,
       status: status ?? this.status,
+      hasRecordedStatus: status != null || hasRecordedStatus,
+      hasRecordedTaskCounts: (totalTasks != null && completedTasks != null) ||
+          hasRecordedTaskCounts,
       startDate: startDate ?? this.startDate,
       targetEndDate: targetEndDate ?? this.targetEndDate,
       totalTasks: totalTasks ?? this.totalTasks,
@@ -283,10 +303,14 @@ class TreatmentTaskModel {
   }) {
     if (taskId.trim().isEmpty) throw ArgumentError('taskId cannot be empty');
     if (planId.trim().isEmpty) throw ArgumentError('planId cannot be empty');
-    if (patientId.trim().isEmpty) throw ArgumentError('patientId cannot be empty');
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError('patientId cannot be empty');
+    }
     if (title.trim().isEmpty) throw ArgumentError('title cannot be empty');
-    if (isCompleted && (completedByNurseId == null || completedByNurseId!.trim().isEmpty)) {
-      throw ArgumentError('completed task must have completedByNurseId (BR-3.6)');
+    if (isCompleted &&
+        (completedByNurseId == null || completedByNurseId!.trim().isEmpty)) {
+      throw ArgumentError(
+          'completed task must have completedByNurseId (BR-3.6)');
     }
     if (isCompleted && completedAt == null) {
       throw ArgumentError('completed task must have completedAt timestamp');
@@ -294,7 +318,8 @@ class TreatmentTaskModel {
   }
 
   bool get isPending => status.toLowerCase() == TreatmentTaskStatus.pending;
-  bool get isInProgress => status.toLowerCase() == TreatmentTaskStatus.inProgress;
+  bool get isInProgress =>
+      status.toLowerCase() == TreatmentTaskStatus.inProgress;
   bool get isCompleted => status.toLowerCase() == TreatmentTaskStatus.completed;
   bool get isSkipped => status.toLowerCase() == TreatmentTaskStatus.skipped;
 
@@ -302,30 +327,34 @@ class TreatmentTaskModel {
   bool get isAnchored => fabricStatus?.toUpperCase() == 'COMMITTED';
   bool get isPendingAnchoring => fabricStatus?.toUpperCase() == 'PENDING';
   bool get isProcessingAnchoring => fabricStatus?.toUpperCase() == 'PROCESSING';
-  bool get isFailedRetryable => fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
-  bool get isFailedPermanent => fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
+  bool get isFailedRetryable =>
+      fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
+  bool get isFailedPermanent =>
+      fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
   bool get hasAnchoringFailed => isFailedRetryable || isFailedPermanent;
 
   Map<String, dynamic> toMap() => {
-    'taskId': taskId,
-    'planId': planId,
-    'patientId': patientId,
-    'title': title,
-    'instructions': instructions,
-    'category': category,
-    'scheduledTime': scheduledTime != null ? Timestamp.fromDate(scheduledTime!) : null,
-    'status': status,
-    'completedByNurseId': completedByNurseId,
-    'completedByNurseName': completedByNurseName,
-    'completedAt': completedAt != null ? Timestamp.fromDate(completedAt!) : null,
-    'executionRemarks': executionRemarks,
-    'skipReason': skipReason,
-    'createdAt': Timestamp.fromDate(createdAt),
-    'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
-    'fabricStatus': fabricStatus,
-    'fabricTxId': fabricTxId,
-    'fabricTimestamp': fabricTimestamp,
-  };
+        'taskId': taskId,
+        'planId': planId,
+        'patientId': patientId,
+        'title': title,
+        'instructions': instructions,
+        'category': category,
+        'scheduledTime':
+            scheduledTime != null ? Timestamp.fromDate(scheduledTime!) : null,
+        'status': status,
+        'completedByNurseId': completedByNurseId,
+        'completedByNurseName': completedByNurseName,
+        'completedAt':
+            completedAt != null ? Timestamp.fromDate(completedAt!) : null,
+        'executionRemarks': executionRemarks,
+        'skipReason': skipReason,
+        'createdAt': Timestamp.fromDate(createdAt),
+        'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+        'fabricStatus': fabricStatus,
+        'fabricTxId': fabricTxId,
+        'fabricTimestamp': fabricTimestamp,
+      };
 
   factory TreatmentTaskModel.fromMap(Map<String, dynamic> map, [String? id]) {
     return TreatmentTaskModel(
@@ -425,36 +454,46 @@ class TreatmentProgressUpdateModel {
     this.fabricStatus,
     this.fabricTimestamp,
   }) {
-    if (updateId.trim().isEmpty) throw ArgumentError('updateId cannot be empty');
+    if (updateId.trim().isEmpty) {
+      throw ArgumentError('updateId cannot be empty');
+    }
     if (planId.trim().isEmpty) throw ArgumentError('planId cannot be empty');
-    if (patientId.trim().isEmpty) throw ArgumentError('patientId cannot be empty');
-    if (authorUid.trim().isEmpty) throw ArgumentError('authorUid cannot be empty');
-    if (clinicalSummary.trim().isEmpty) throw ArgumentError('clinicalSummary cannot be empty');
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError('patientId cannot be empty');
+    }
+    if (authorUid.trim().isEmpty) {
+      throw ArgumentError('authorUid cannot be empty');
+    }
+    if (clinicalSummary.trim().isEmpty) {
+      throw ArgumentError('clinicalSummary cannot be empty');
+    }
   }
 
   // Hyperledger Fabric integrity status getters
   bool get isAnchored => fabricStatus?.toUpperCase() == 'COMMITTED';
   bool get isPendingAnchoring => fabricStatus?.toUpperCase() == 'PENDING';
   bool get isProcessingAnchoring => fabricStatus?.toUpperCase() == 'PROCESSING';
-  bool get isFailedRetryable => fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
-  bool get isFailedPermanent => fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
+  bool get isFailedRetryable =>
+      fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
+  bool get isFailedPermanent =>
+      fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
   bool get hasAnchoringFailed => isFailedRetryable || isFailedPermanent;
 
   Map<String, dynamic> toMap() => {
-    'updateId': updateId,
-    'planId': planId,
-    'patientId': patientId,
-    'authorUid': authorUid,
-    'authorName': authorName,
-    'authorRole': authorRole,
-    'timestamp': Timestamp.fromDate(timestamp),
-    'clinicalSummary': clinicalSummary,
-    'patientTolerance': patientTolerance,
-    'factualObservations': factualObservations,
-    'fabricTxId': fabricTxId,
-    'fabricStatus': fabricStatus,
-    'fabricTimestamp': fabricTimestamp,
-  };
+        'updateId': updateId,
+        'planId': planId,
+        'patientId': patientId,
+        'authorUid': authorUid,
+        'authorName': authorName,
+        'authorRole': authorRole,
+        'timestamp': Timestamp.fromDate(timestamp),
+        'clinicalSummary': clinicalSummary,
+        'patientTolerance': patientTolerance,
+        'factualObservations': factualObservations,
+        'fabricTxId': fabricTxId,
+        'fabricStatus': fabricStatus,
+        'fabricTimestamp': fabricTimestamp,
+      };
 
   factory TreatmentProgressUpdateModel.fromMap(
     Map<String, dynamic> map, [
@@ -535,9 +574,11 @@ class TreatmentPlanIntegrityStatus {
   bool get isCommitted => fabricStatus?.toUpperCase() == 'COMMITTED';
   bool get isPending => fabricStatus?.toUpperCase() == 'PENDING';
   bool get isProcessing => fabricStatus?.toUpperCase() == 'PROCESSING';
-  bool get isFailedRetryable => fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
-  bool get isFailedPermanent => fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
+  bool get isFailedRetryable =>
+      fabricStatus?.toUpperCase() == 'FAILED_RETRYABLE';
+  bool get isFailedPermanent =>
+      fabricStatus?.toUpperCase() == 'FAILED_PERMANENT';
   bool get hasFailed => isFailedRetryable || isFailedPermanent;
-  bool get isVerified => isAnchored && fabricTxId != null && fabricTxId!.isNotEmpty;
+  bool get isVerified =>
+      isAnchored && fabricTxId != null && fabricTxId!.isNotEmpty;
 }
-

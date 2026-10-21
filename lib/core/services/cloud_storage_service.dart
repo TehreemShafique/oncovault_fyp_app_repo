@@ -22,8 +22,8 @@ class CloudStorageService {
   CloudStorageService._internal();
   static final CloudStorageService instance = CloudStorageService._internal();
 
-  final FirebaseStorage _storage = FirebaseStorage.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  FirebaseStorage get _storage => FirebaseStorage.instance;
+  FirebaseAuth get _auth => FirebaseAuth.instance;
 
   // ─── Helpers ──────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ class CloudStorageService {
   String get _uid {
     final user = _auth.currentUser;
     if (user == null) {
-      throw CloudStorageException('No authenticated user found. Please sign in first.');
+      throw const CloudStorageException('No authenticated user found. Please sign in first.');
     }
     return user.uid;
   }

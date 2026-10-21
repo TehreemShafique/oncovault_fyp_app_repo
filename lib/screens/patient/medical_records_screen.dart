@@ -12,7 +12,8 @@ import 'diagnosis_history_screen.dart';
 
 class MedicalRecordsScreen extends StatefulWidget {
   final String patientId;
-  const MedicalRecordsScreen({super.key, required this.patientId});
+  final int initialTabIndex;
+  const MedicalRecordsScreen({super.key, required this.patientId, this.initialTabIndex = 0});
   @override
   State<MedicalRecordsScreen> createState() => _MedicalRecordsScreenState();
 }
@@ -28,7 +29,7 @@ class _MedicalRecordsScreenState extends State<MedicalRecordsScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 3, vsync: this, initialIndex: widget.initialTabIndex.clamp(0, 2));
   }
 
   @override

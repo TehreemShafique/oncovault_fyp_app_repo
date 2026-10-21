@@ -4,7 +4,7 @@ import { config } from './config/env';
 import { FabricGatewayService } from './services/fabricGateway';
 import { ReconciliationWorker } from './services/reconciliationWorker';
 
-async function bootstrap(): Promise<void> {
+export async function bootstrap(): Promise<void> {
   const { host, port } = config;
 
   // Enforce loopback binding check
@@ -17,7 +17,11 @@ async function bootstrap(): Promise<void> {
     const fabric = FabricGatewayService.getInstance();
     await fabric.connect();
     console.info(`[+] Connected to Hyperledger Fabric: Channel '${config.fabric.channelName}', Chaincode '${config.fabric.chaincodeName}' via '${config.fabric.peerEndpoint}'`);
-    ReconciliationWorker.getInstance().startPeriodicSweeper(15000);
+    if (config.enableBackgroundAnchoring) {
+      ReconciliationWorker.getInstance().startPeriodicSweeper(15000);
+    } else {
+      console.info('[+] Background clinical-note and treatment anchoring disabled by configuration.');
+    }
   } catch (err: any) {
     console.warn(`[!] Initial Fabric Gateway connection deferred: ${err.message}`);
   }

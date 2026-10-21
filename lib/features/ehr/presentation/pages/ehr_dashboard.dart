@@ -434,7 +434,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
                 icon : Icons.email_outlined),
           ]),
 
-          if (p.allergies.isNotEmpty) ...[
+          if (p.allergies != null && p.allergies!.isNotEmpty) ...[
             const SizedBox(height: 12),
             _divider(),
             const SizedBox(height: 12),
@@ -448,7 +448,7 @@ class _EhrDashboardState extends State<EhrDashboard> {
             Wrap(
               spacing   : 6,
               runSpacing: 6,
-              children  : p.allergies
+              children  : p.allergies!
                   .map((a) => Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 10, vertical: 4),

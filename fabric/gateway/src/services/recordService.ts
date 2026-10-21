@@ -2,10 +2,27 @@
 import crypto from 'crypto';
 import { ALLOWED_METADATA_KEYS } from '../config/constants';
 import { AuthenticatedUser, RecordProof, VerificationResult } from '../types';
-import { FabricGatewayService } from './fabricGateway';
+import { FabricGatewayService, RecordSubmissionError } from './fabricGateway';
 import { FirebaseAdminService } from './firebaseAdmin';
 import { PseudonymService } from './pseudonymService';
 import { ReconciliationService } from './reconciliationService';
+
+/**
+ * Deterministically serializes arbitrary JavaScript objects/primitives into JSON.
+ * Recursively sorts all object keys at all nested levels and handles arrays properly,
+ * avoiding the standard JSON.stringify replacer array top-level filter pitfall.
+ */
+export function canonicalJsonStringify(val: any): string {
+  if (val === null || typeof val !== 'object') {
+    return JSON.stringify(val);
+  }
+  if (Array.isArray(val)) {
+    return '[' + val.map((item) => canonicalJsonStringify(item ?? null)).join(',') + ']';
+  }
+  const keys = Object.keys(val).filter((k) => val[k] !== undefined).sort();
+  const entries = keys.map((key) => `${JSON.stringify(key)}:${canonicalJsonStringify(val[key])}`);
+  return '{' + entries.join(',') + '}';
+}
 
 export class RecordService {
   private _fabricGateway?: FabricGatewayService;
@@ -54,6 +71,182 @@ export class RecordService {
       summary: record.summary || ''
     };
     const serialized = JSON.stringify(canonicalObject, Object.keys(canonicalObject).sort());
+    return this.computeSha256(Buffer.from(serialized, 'utf8'));
+  }
+
+  /**
+   * Deterministic canonical serialization and SHA-256 hashing for Blood Cancer EHR records.
+   * Authoritatively covers:
+   *  - CBC measurements and differential values (WBC, RBC, Hemoglobin, Hematocrit, Platelets,
+   *    Neutrophils, Lymphocytes, Monocytes, Eosinophils, Basophils, RDW-SD, RDW-CV)
+   *  - 16 hematologic symptoms (shortnessOfBreath, bonePain, fever, familyHistory, frequentInfections,
+   *    itchySkinOrRash, lossOfAppetiteOrNausea, persistentWeaknessAndFatigue, swollenPainlessLymphNodes,
+   *    significantBruisingOrBleeding, enlargedLiver, oralCavityChanges, visionBlurring, jaundice,
+   *    nightSweats, smokes)
+   *  - Clinical observations, bone marrow biopsy results, blast cell percentage, chemotherapy details,
+   *    clinical notes, diagnosis classification (diseaseType, diagnosisSubtype, stage, diagnosisStatus)
+   *  - Prescribed medications list (sorted, trimmed)
+   *  - Clinical identity anchors (recordId, patientId, doctorId, doctorName, createdAtIso)
+   *  - Doctor-reviewed AI risk assessment (only if doctorReviewed === true; unreviewed advisory AI is excluded)
+   * Volatile operational fields (updatedAt, storedHash, blockchainTxId, fabricStatus, fabricTxId, UI states)
+   * are strictly excluded to preserve cryptographic immutability.
+   */
+  public computeCanonicalEhrHash(record: Record<string, any>): string {
+    const rawSymptoms = record.symptoms || {};
+    const symptoms = {
+      bonePain: Boolean(rawSymptoms.bonePain),
+      enlargedLiver: Boolean(rawSymptoms.enlargedLiver),
+      familyHistory: Boolean(rawSymptoms.familyHistory),
+      fever: Boolean(rawSymptoms.fever),
+      frequentInfections: Boolean(rawSymptoms.frequentInfections),
+      itchySkinOrRash: Boolean(rawSymptoms.itchySkinOrRash),
+      jaundice: Boolean(rawSymptoms.jaundice),
+      lossOfAppetiteOrNausea: Boolean(rawSymptoms.lossOfAppetiteOrNausea),
+      nightSweats: Boolean(rawSymptoms.nightSweats),
+      oralCavityChanges: Boolean(rawSymptoms.oralCavityChanges),
+      persistentWeaknessAndFatigue: Boolean(rawSymptoms.persistentWeaknessAndFatigue),
+      shortnessOfBreath: Boolean(rawSymptoms.shortnessOfBreath),
+      significantBruisingOrBleeding: Boolean(rawSymptoms.significantBruisingOrBleeding),
+      smokes: Boolean(rawSymptoms.smokes),
+      swollenPainlessLymphNodes: Boolean(rawSymptoms.swollenPainlessLymphNodes),
+      visionBlurring: Boolean(rawSymptoms.visionBlurring)
+    };
+
+    const rawCbc = record.cbc || {};
+    const normalizeNum = (val: any): number | null => {
+      if (val === null || val === undefined || val === '') return null;
+      const n = Number(val);
+      return isNaN(n) ? null : n;
+    };
+    const normalizeDiff = (diff: any) => {
+      if (!diff || typeof diff !== 'object') return { absolute: null, percentage: null };
+      return {
+        absolute: normalizeNum(diff.absolute ?? diff.Absolute),
+        percentage: normalizeNum(diff.percentage ?? diff.Percentage)
+      };
+    };
+
+    const cbc = {
+      basophils: normalizeDiff(rawCbc.Basophils ?? rawCbc.basophils),
+      eosinophils: normalizeDiff(rawCbc.Eosinophils ?? rawCbc.eosinophils),
+      hematocrit: normalizeNum(rawCbc.Hematocrit ?? rawCbc.hematocrit),
+      hemoglobin: normalizeNum(rawCbc.Hemoglobin ?? rawCbc.hemoglobin),
+      lymphocytes: normalizeDiff(rawCbc.Lymphocytes ?? rawCbc.lymphocytes),
+      monocytes: normalizeDiff(rawCbc.Monocytes ?? rawCbc.monocytes),
+      neutrophils: normalizeDiff(rawCbc.Neutrophils ?? rawCbc.neutrophils),
+      platelets: normalizeNum(rawCbc.Platelets ?? rawCbc.platelets),
+      rbc: normalizeNum(rawCbc.RBC ?? rawCbc.rbc),
+      rdwCv: normalizeNum(rawCbc['RDW-CV'] ?? rawCbc.rdwCv),
+      rdwSd: normalizeNum(rawCbc['RDW-SD'] ?? rawCbc.rdwSd),
+      wbc: normalizeNum(rawCbc.WBC ?? rawCbc.wbc)
+    };
+
+    let createdAtIso = '';
+    const rawCreated = record.createdAt;
+    if (rawCreated && typeof rawCreated.toDate === 'function') {
+      createdAtIso = rawCreated.toDate().toISOString();
+    } else if (rawCreated instanceof Date) {
+      createdAtIso = rawCreated.toISOString();
+    } else if (typeof rawCreated === 'string') {
+      createdAtIso = rawCreated.trim();
+    }
+
+    const rawMeds = Array.isArray(record.medications) ? record.medications : [];
+    const medications = rawMeds
+      .map((m: any) => String(m || '').trim())
+      .filter((m: string) => m.length > 0)
+      .sort();
+
+    let aiAnalysis: any = null;
+    if (record.aiAnalysis && record.aiAnalysis.doctorReviewed === true) {
+      aiAnalysis = {
+        doctorReviewed: true,
+        modelVersion: (record.aiAnalysis.modelVersion || '').trim(),
+        prediction: (record.aiAnalysis.prediction || '').trim(),
+        riskScore: normalizeNum(record.aiAnalysis.riskScore)
+      };
+    }
+
+    const canonicalObject = {
+      aiAnalysis,
+      blastCellPercentage: normalizeNum(record.blastCellPercentage),
+      boneMarrowBiopsy: (record.boneMarrowBiopsy || '').trim(),
+      cbc,
+      chemotherapy: (record.chemotherapy || '').trim(),
+      clinicalNotes: (record.clinicalNotes || '').trim(),
+      createdAtIso,
+      diagnosisStatus: (record.diagnosisStatus || '').trim(),
+      diagnosisSubtype: (record.diagnosisSubtype || '').trim(),
+      diseaseType: (record.diseaseType || '').trim(),
+      doctorId: (record.doctorId || '').trim(),
+      doctorName: (record.doctorName || '').trim(),
+      medications,
+      patientId: (record.patientId || '').trim(),
+      recordId: (record.recordId || record.id || '').trim(),
+      stage: (record.stage || '').trim(),
+      symptoms,
+      voiceTranscription: (record.voiceTranscription || '').trim()
+    };
+
+    const serialized = canonicalJsonStringify(canonicalObject);
+    return this.computeSha256(Buffer.from(serialized, 'utf8'));
+  }
+
+  /**
+   * Canonical serialization for digital prescriptions (Schema 2.0).
+   * Fully covers all clinical medication details: drug names, dosages,
+   * frequencies, durations, routes, instructions, prescribing clinician, and dates.
+   */
+  public computeCanonicalPrescriptionHash(record: Record<string, any>): string {
+    const rawDrugs: any[] = Array.isArray(record.prescriptionData?.drugs)
+      ? record.prescriptionData.drugs
+      : Array.isArray(record.drugs)
+      ? record.drugs
+      : [];
+
+    const canonicalDrugs = rawDrugs.map((d: any) => ({
+      dosage: (d.dosage || '').trim(),
+      duration: (d.duration || '').trim(),
+      frequency: (d.frequency || '').trim(),
+      instructions: (d.instructions || '').trim(),
+      name: (d.name || '').trim(),
+      route: (d.route || '').trim()
+    }));
+
+    let dateIso = '';
+    const rawDate =
+      record.dateIso ||
+      record.date ||
+      record.issuedAt ||
+      record.prescriptionData?.dateIso ||
+      record.prescriptionData?.issuedAt ||
+      record.prescriptionData?.date ||
+      record.uploadedAt;
+
+    if (rawDate && typeof rawDate.toDate === 'function') {
+      dateIso = rawDate.toDate().toISOString();
+    } else if (rawDate instanceof Date) {
+      dateIso = rawDate.toISOString();
+    } else if (typeof rawDate === 'string') {
+      dateIso = rawDate.trim();
+    }
+
+    const canonicalObject = {
+      additionalNotes: (record.additionalNotes || record.prescriptionData?.additionalNotes || '').trim(),
+      dateIso,
+      doctorId: (record.doctorId || record.prescriptionData?.doctorId || '').trim(),
+      doctorName: (record.doctorName || record.prescriptionData?.doctorName || '').trim(),
+      drugs: canonicalDrugs,
+      facility: (record.facility || '').trim(),
+      followUpInstructions: (record.followUpInstructions || record.prescriptionData?.followUpInstructions || '').trim(),
+      id: (record.id || '').trim(),
+      patientId: (record.patientId || '').trim(),
+      subtype: (record.subtype || '').trim(),
+      summary: (record.summary || '').trim(),
+      type: (record.type || 'prescription').toLowerCase()
+    };
+
+    const serialized = canonicalJsonStringify(canonicalObject);
     return this.computeSha256(Buffer.from(serialized, 'utf8'));
   }
 
@@ -155,9 +348,16 @@ export class RecordService {
       throw new Error(`Conflict: An anchor operation is already in progress for record '${recordId}'.`);
     }
 
+    let operationId: string | undefined;
+    let ownsOperation = false;
+    let submissionAttempted = false;
+    let ledgerConfirmed = false;
+    let confirmedTxId: string | undefined;
+
     try {
       // 1. Fetch authoritative Firestore medical record
-      const record = await this.firebaseAdmin.getMedicalRecord(recordId, patientId);
+      const effectivePatientId = patientId || (user.role === 'patient' ? user.uid : undefined);
+      const record = await this.firebaseAdmin.getMedicalRecord(recordId, effectivePatientId);
       if (!record) {
         throw new Error(`Medical record '${recordId}' not found.`);
       }
@@ -169,13 +369,34 @@ export class RecordService {
       // 2. Authorize record access (strictly fail-closed)
       await this.assertRecordAccess(user, record.patientId);
 
+      const isEhr =
+        record.isBloodCancerEhr ||
+        record.documentType === 'BLOOD_CANCER_EHR' ||
+        (providedMetadata?.documentType === 'BLOOD_CANCER_EHR');
+
+      if (isEhr) {
+        if (user.role !== 'doctor' && user.role !== 'admin') {
+          throw new Error('Access Denied: Only attending physicians may finalize and anchor Blood Cancer EHRs to Hyperledger Fabric.');
+        }
+      }
+
       // 3. Obtain file bytes and calculate SHA-256 hash server-side
+      const isPrescription =
+        !isEhr &&
+        ((record.type && record.type.toLowerCase() === 'prescription') ||
+        (record.subtype && record.subtype.toLowerCase().includes('prescription')) ||
+        Boolean(record.prescriptionData));
+
       let fileHash = '';
-      if (record.isClinicalNote) {
+      if (isEhr) {
+        fileHash = this.computeCanonicalEhrHash(record);
+      } else if (record.isClinicalNote) {
         fileHash = this.computeCanonicalClinicalNoteHash(record);
       } else if (record.fileUrl && record.fileUrl.trim() !== '') {
         const fileBuffer = await this.firebaseAdmin.getFileBytes(record.fileUrl);
         fileHash = this.computeSha256(fileBuffer);
+      } else if (isPrescription) {
+        fileHash = this.computeCanonicalPrescriptionHash(record);
       } else {
         // Metadata-only record: use deterministic canonical hash
         fileHash = this.computeCanonicalMetadataHash(record);
@@ -186,13 +407,14 @@ export class RecordService {
       const serverOpId =
         'op_anchor_' +
         crypto.createHash('sha256').update(`${record.patientId}:${recordId}:${fileHash}`).digest('hex').substring(0, 24);
+      operationId = serverOpId;
 
       // 5. Generate deterministic opaque ledger record key
       const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(record.patientId, recordId);
 
       // 6. Check durable operation state across process restarts
       const priorOp = await this.reconciliation.getOperationAsync(serverOpId);
-      if (priorOp && priorOp.status === 'COMMITTED') {
+      if (priorOp && ['COMMITTED', 'PENDING', 'UNCERTAIN_RETRYABLE'].includes(priorOp.status)) {
         try {
           const existingProofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
           const existingProof: RecordProof = JSON.parse(existingProofStr);
@@ -204,19 +426,31 @@ export class RecordService {
               timestamp: existingProof.timestamp,
               opaqueRecordKey
             }, record.patientId);
+            await this.reconciliation.markCommitted(serverOpId, existingProof.txId, existingProof.timestamp);
             return { proof: existingProof, opaqueRecordKey, fileHash };
           }
         } catch (_) {
-          // Re-evaluate on ledger below
+          // Absence or a failed query is not permission to resubmit an unresolved operation.
         }
+        throw new Error('Conflict: Previous anchor outcome requires verification; no new transaction submitted.');
       }
 
-      await this.reconciliation.startOperation(serverOpId, 'ANCHOR_RECORD', recordId, idempotencyKey);
+      const claimed = await this.reconciliation.startOperation(serverOpId, 'ANCHOR_RECORD', recordId, idempotencyKey);
+      if (claimed.status === 'COMMITTED') {
+        throw new Error('Conflict: Anchor committed concurrently; check the existing proof.');
+      }
+      ownsOperation = true;
 
       // 7. Sanitize metadata against strict chaincode allowlist
       const sanitizedMeta: Record<string, any> = {
-        documentType: record.isClinicalNote ? 'CLINICAL_NOTE' : (record.type || 'MEDICAL_RECORD').toUpperCase(),
-        schemaVersion: '1.0'
+        documentType: isEhr
+          ? 'BLOOD_CANCER_EHR'
+          : record.isClinicalNote
+          ? 'CLINICAL_NOTE'
+          : isPrescription
+          ? 'PRESCRIPTION'
+          : (record.type || 'MEDICAL_RECORD').toUpperCase(),
+        schemaVersion: (isEhr || isPrescription) ? '2.0' : '1.0'
       };
       if (providedMetadata && typeof providedMetadata === 'object') {
         for (const key of Object.keys(providedMetadata)) {
@@ -226,38 +460,47 @@ export class RecordService {
         }
       }
 
-      // 8. Check existing ledger proof to ensure idempotent retry or legitimate revision
-      try {
-        const existingProofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
-        const existingProof: RecordProof = JSON.parse(existingProofStr);
+      // Keep disease-specific classification off-chain. The deployed contract's
+      // metadata privacy filter rejects "cancer", including in document types.
+      // Apply after caller metadata so it cannot restore the rejected label.
+      if (isEhr) sanitizedMeta.documentType = 'EHR';
 
+      // Query failure is not absence. Keep proof synchronization outside this catch
+      // so a failed Firestore projection cannot fall through into a second submit.
+      let existingProof: RecordProof | undefined;
+      try {
+        existingProof = JSON.parse(await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey));
+      } catch (error: any) {
+        const missing = `Record '${opaqueRecordKey}' does not exist on ledger.`;
+        if (error?.code !== 2 || !Array.isArray(error.details) || error.details.length === 0 ||
+            !error.details.every((detail: any) => detail.message === missing ||
+              detail.message === `chaincode response 500, ${missing}`)) throw error;
+      }
+      if (existingProof) {
         if (existingProof.sha256Hash.toLowerCase() === fileHash.toLowerCase()) {
-          // Already anchored with identical hash — idempotent success
+          ledgerConfirmed = true;
+          confirmedTxId = existingProof.txId;
           await this.firebaseAdmin.updateRecordProof(recordId, {
-            txId: existingProof.txId,
-            fileHash,
-            version: existingProof.version,
-            timestamp: existingProof.timestamp,
-            opaqueRecordKey
+            txId: existingProof.txId, fileHash, version: existingProof.version,
+            timestamp: existingProof.timestamp, opaqueRecordKey
           }, record.patientId);
           await this.reconciliation.markCommitted(serverOpId, existingProof.txId, existingProof.timestamp);
           return { proof: existingProof, opaqueRecordKey, fileHash };
-        } else {
-          // Legitimate revision: mark revisionReason in metadata
-          sanitizedMeta.revision = (existingProof.version || 1) + 1;
-          sanitizedMeta.revisionReason = providedMetadata?.revisionReason || 'AMENDED_ASSAY';
         }
-      } catch (err: any) {
-        // Record not on ledger yet: fresh anchor
+        sanitizedMeta.revision = (existingProof.version || 1) + 1;
+        sanitizedMeta.revisionReason = providedMetadata?.revisionReason || 'AMENDED_ASSAY';
       }
 
       // 9. Submit transaction to real Fabric chaincode
+      submissionAttempted = true;
       const { result, txId } = await this.fabricGateway.submitTransaction(
         'AnchorRecordHash',
         opaqueRecordKey,
         fileHash,
         JSON.stringify(sanitizedMeta)
       );
+      ledgerConfirmed = true;
+      confirmedTxId = txId;
 
       const proof: RecordProof = JSON.parse(result);
 
@@ -283,8 +526,13 @@ export class RecordService {
       await this.reconciliation.markCommitted(serverOpId, proof.txId, proof.timestamp);
       return { proof, opaqueRecordKey, fileHash };
     } catch (err: any) {
-      const fallbackOpId = `op_anchor_${recordId}`;
-      await this.reconciliation.markStatus(fallbackOpId, 'FAILED', err.message);
+      if (operationId && ownsOperation) {
+        const definite = !ledgerConfirmed && (!submissionAttempted ||
+          (err instanceof RecordSubmissionError && err.outcome !== 'UNCERTAIN'));
+        await this.reconciliation.markStatus(operationId,
+          definite ? 'FAILED' : 'UNCERTAIN_RETRYABLE', err.message,
+          err instanceof RecordSubmissionError ? err.txId : confirmedTxId);
+      }
       throw err;
     } finally {
       this.reconciliation.releaseLock(lockKey);
@@ -305,7 +553,8 @@ export class RecordService {
     clientSpecifiedHash?: string,
     patientId?: string
   ): Promise<VerificationResult> {
-    const record = await this.firebaseAdmin.getMedicalRecord(recordId, patientId);
+    const effectivePatientId = patientId || (user.role === 'patient' ? user.uid : undefined);
+    const record = await this.firebaseAdmin.getMedicalRecord(recordId, effectivePatientId);
     if (!record) {
       return {
         verified: false,
@@ -318,14 +567,12 @@ export class RecordService {
 
     await this.assertRecordAccess(user, record.patientId);
 
-    // 1. Authoritative Content Hash Calculation from Current Clinical Data
-    let computedContentHash = '';
-    if (record.isClinicalNote) {
-      computedContentHash = this.computeCanonicalClinicalNoteHash(record);
-    } else if (record.fileUrl && record.fileUrl.trim() !== '') {
+    // If record references a binary file, verify storage readability first
+    let initialBinaryHash = '';
+    if (record.fileUrl && record.fileUrl.trim() !== '') {
       try {
         const fileBuffer = await this.firebaseAdmin.getFileBytes(record.fileUrl);
-        computedContentHash = this.computeSha256(fileBuffer);
+        initialBinaryHash = this.computeSha256(fileBuffer);
       } catch (storageErr: any) {
         return {
           verified: false,
@@ -335,35 +582,24 @@ export class RecordService {
           message: `Authoritative storage file is missing or unreadable: ${storageErr.message}`
         };
       }
-    } else {
-      // Metadata-only record: canonical serialization of current clinical fields
-      computedContentHash = this.computeCanonicalMetadataHash(record);
-    }
-
-    if (!computedContentHash) {
-      return {
-        verified: false,
-        status: 'NOT_ANCHORED',
-        recordId,
-        targetHash: '',
-        message: 'No authoritative medical content available to compute cryptographic digest.'
-      };
     }
 
     const opaqueRecordKey = PseudonymService.generateOpaqueRecordKey(record.patientId, recordId);
 
-    // 2. Query Authoritative Ledger Proof from Fabric
+    // 1. Query Authoritative Ledger Proof from Fabric First
     let ledgerProof: RecordProof | undefined;
     try {
       const proofStr = await this.fabricGateway.evaluateTransaction('GetRecordProof', opaqueRecordKey);
-      ledgerProof = JSON.parse(proofStr);
+      if (proofStr && typeof proofStr === 'string') {
+        ledgerProof = JSON.parse(proofStr);
+      }
     } catch (err: any) {
       if (err.message && (err.message.includes('not found') || err.message.includes('does not exist'))) {
         return {
           verified: false,
           status: 'NOT_ANCHORED',
           recordId,
-          targetHash: computedContentHash,
+          targetHash: clientSpecifiedHash || '',
           message: 'Record has not been anchored on the blockchain ledger.'
         };
       }
@@ -371,7 +607,7 @@ export class RecordService {
         verified: false,
         status: 'VERIFICATION_UNAVAILABLE',
         recordId,
-        targetHash: computedContentHash,
+        targetHash: clientSpecifiedHash || '',
         message: `Ledger verification unavailable: ${err.message}`
       };
     }
@@ -381,8 +617,70 @@ export class RecordService {
         verified: false,
         status: 'NOT_ANCHORED',
         recordId,
-        targetHash: computedContentHash,
+        targetHash: clientSpecifiedHash || '',
         message: 'Record has not been anchored on the blockchain ledger.'
+      };
+    }
+
+    // 2. Authoritative Schema Resolution from Ledger Proof (Never Trust Client)
+    const ledgerSchemaVersion = ledgerProof.metadata?.schemaVersion || '1.0';
+    const isEhr =
+      record.isBloodCancerEhr ||
+      record.documentType === 'BLOOD_CANCER_EHR' ||
+      ledgerProof.metadata?.documentType === 'BLOOD_CANCER_EHR';
+
+    const isPrescription =
+      !isEhr &&
+      ((record.type && record.type.toLowerCase() === 'prescription') ||
+      (record.subtype && record.subtype.toLowerCase().includes('prescription')) ||
+      Boolean(record.prescriptionData) ||
+      ledgerProof.metadata?.documentType === 'PRESCRIPTION');
+
+    let computedContentHash = '';
+    let isLegacyPrescription = false;
+
+    if (isEhr) {
+      computedContentHash = this.computeCanonicalEhrHash(record);
+    } else if (record.isClinicalNote) {
+      computedContentHash = this.computeCanonicalClinicalNoteHash(record);
+    } else if (initialBinaryHash) {
+      computedContentHash = initialBinaryHash;
+    } else if (isPrescription) {
+      if (ledgerSchemaVersion === '1.0') {
+        // Schema 1.0: Only metadata fields were anchored
+        computedContentHash = this.computeCanonicalMetadataHash(record);
+        isLegacyPrescription = true;
+      } else if (ledgerSchemaVersion === '2.0') {
+        // Schema 2.0: Complete prescription and drug clinical details are covered
+        computedContentHash = this.computeCanonicalPrescriptionHash(record);
+      } else {
+        // Unknown schema version: fail closed
+        return {
+          verified: false,
+          status: 'VERIFICATION_UNAVAILABLE',
+          recordId,
+          targetHash: '',
+          ledgerProof,
+          schemaVersion: ledgerSchemaVersion,
+          comprehensiveDrugIntegrity: false,
+          message: `Unknown ledger schema version '${ledgerSchemaVersion}'. Verification rejected.`
+        };
+      }
+    } else {
+      // General metadata record
+      computedContentHash = this.computeCanonicalMetadataHash(record);
+    }
+
+    if (!computedContentHash) {
+      return {
+        verified: false,
+        status: 'NOT_ANCHORED',
+        recordId,
+        targetHash: '',
+        ledgerProof,
+        schemaVersion: ledgerSchemaVersion,
+        comprehensiveDrugIntegrity: false,
+        message: 'No authoritative medical content available to compute cryptographic digest.'
       };
     }
 
@@ -423,18 +721,38 @@ export class RecordService {
       clientHashMatchesLedger;
 
     if (isFullyVerified) {
+      if (isLegacyPrescription) {
+        return {
+          verified: true,
+          status: 'LEGACY_METADATA_VERIFIED',
+          recordId,
+          targetHash: computedContentHash,
+          ledgerProof,
+          schemaVersion: '1.0',
+          comprehensiveDrugIntegrity: false,
+          message:
+            'Legacy metadata verified against ledger proof. Note: Medication details (drugs, dosage, frequency) are not covered under schema 1.0.'
+        };
+      }
+
       return {
         verified: true,
         status: 'VERIFIED',
         recordId,
         targetHash: computedContentHash,
         ledgerProof,
-        message: 'Record integrity verified against immutable Hyperledger Fabric ledger.'
+        schemaVersion: ledgerSchemaVersion,
+        comprehensiveDrugIntegrity: isPrescription && ledgerSchemaVersion === '2.0',
+        message: isEhr
+          ? 'Blood Cancer EHR cryptographic integrity verified against Hyperledger Fabric ledger.'
+          : 'Record integrity verified against immutable Hyperledger Fabric ledger.'
       };
     } else {
       let mismatchReason = 'Record content does not match the immutable ledger proof (potential tampering or mismatch).';
       if (!contentMatchesLedger) {
-        mismatchReason = 'Authoritative clinical content SHA-256 digest differs from on-chain proof.';
+        mismatchReason = isEhr
+          ? 'INTEGRITY MISMATCH: Current Blood Cancer EHR clinical content differs from the cryptographic digest committed on the Hyperledger Fabric ledger.'
+          : 'Authoritative clinical content SHA-256 digest differs from on-chain proof.';
       } else if (!storedHashMatchesLedger) {
         mismatchReason = 'Stored record fileHash in database does not match immutable ledger proof.';
       } else if (!clientHashMatchesLedger) {
@@ -447,6 +765,8 @@ export class RecordService {
         recordId,
         targetHash: computedContentHash,
         ledgerProof,
+        schemaVersion: ledgerSchemaVersion,
+        comprehensiveDrugIntegrity: false,
         message: mismatchReason
       };
     }
@@ -456,7 +776,8 @@ export class RecordService {
    * Retrieves the current record proof from Fabric.
    */
   public async getRecordProof(user: AuthenticatedUser, recordId: string, patientId?: string): Promise<RecordProof> {
-    const record = await this.firebaseAdmin.getMedicalRecord(recordId, patientId);
+    const effectivePatientId = patientId || (user.role === 'patient' ? user.uid : undefined);
+    const record = await this.firebaseAdmin.getMedicalRecord(recordId, effectivePatientId);
     if (!record) {
       throw new Error(`Record '${recordId}' not found.`);
     }
@@ -472,7 +793,8 @@ export class RecordService {
    * Retrieves the full revision history of a record proof from Fabric.
    */
   public async getRecordHistory(user: AuthenticatedUser, recordId: string, patientId?: string): Promise<any[]> {
-    const record = await this.firebaseAdmin.getMedicalRecord(recordId, patientId);
+    const effectivePatientId = patientId || (user.role === 'patient' ? user.uid : undefined);
+    const record = await this.firebaseAdmin.getMedicalRecord(recordId, effectivePatientId);
     if (!record) {
       throw new Error(`Record '${recordId}' not found.`);
     }
@@ -513,7 +835,7 @@ export class RecordService {
           'CheckConsent',
           patientPseudoId,
           providerPseudoId,
-          'BLOOD_CANCER_RESEARCH'
+          'DIRECT_CARE'
         );
         if (consentResStr) {
           const consentRes = JSON.parse(consentResStr);
@@ -533,6 +855,7 @@ export class RecordService {
 
       const hasConsent = await this.firebaseAdmin.checkDoctorPatientConsent(user.uid, patientId);
       if (!hasConsent) {
+        // TODO: SECURITY RISK - Firestore fallback consent check. Must be removed in final release.
         throw new Error('Access Denied: Clinician does not hold active patient consent for this record.');
       }
       return;

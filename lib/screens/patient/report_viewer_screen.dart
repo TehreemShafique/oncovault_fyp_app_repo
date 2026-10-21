@@ -210,7 +210,10 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
     );
   }
 
+  bool get _isPrescription => widget.record.type == RecordType.prescription;
+
   IconData get _typeIcon {
+    if (_isPrescription) return Icons.medication_rounded;
     switch (widget.record.subtype.toLowerCase()) {
       case 'imaging':
         return Icons.image_outlined;
@@ -226,6 +229,7 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
   }
 
   Color get _typeBg {
+    if (_isPrescription) return OV.primaryContainer;
     switch (widget.record.subtype.toLowerCase()) {
       case 'imaging':
         return OV.secondaryContainer;
@@ -239,6 +243,7 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
   }
 
   Color get _typeColor {
+    if (_isPrescription) return OV.primary;
     switch (widget.record.subtype.toLowerCase()) {
       case 'imaging':
         return OV.secondary;
@@ -277,7 +282,7 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                   ),
                   const Spacer(),
                   Text(
-                    'Report Viewer',
+                    _isPrescription ? 'Prescription' : 'Report Viewer',
                     style: GoogleFonts.manrope(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -285,18 +290,21 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                     ),
                   ),
                   const Spacer(),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: OV.outlineVariant.withOpacity(0.5)),
+                  if (!_isPrescription)
+                    GestureDetector(
+                      onTap: () {},
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: OV.outlineVariant.withOpacity(0.5)),
+                        ),
+                        child: const Icon(Icons.share_outlined, size: 16, color: OV.primary),
                       ),
-                      child: Icon(Icons.share_outlined, size: 16, color: OV.primary),
-                    ),
-                  ),
+                    )
+                  else
+                    const SizedBox(width: 32),
                 ],
               ),
             ),
@@ -327,12 +335,15 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                           Row(
                             children: [
                               Container(
-                                width: 56,
-                                height: 56,
-                                decoration: BoxDecoration(color: _typeBg, borderRadius: BorderRadius.circular(14)),
-                                child: Icon(_typeIcon, color: _typeColor, size: 28),
+                                width: 44,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: _typeBg,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(_typeIcon, color: _typeColor, size: 22),
                               ),
-                              const SizedBox(width: 14),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -340,33 +351,23 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                                     Text(
                                       widget.record.title,
                                       style: GoogleFonts.manrope(
-                                        fontSize: 17,
+                                        fontSize: 16,
                                         fontWeight: FontWeight.w700,
                                         color: OV.onSurface,
-                                        height: 1.2,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    if (widget.record.subtype.isNotEmpty)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                        decoration: BoxDecoration(color: _typeBg, borderRadius: BorderRadius.circular(100)),
-                                        child: Text(
-                                          widget.record.subtype,
-                                          style: GoogleFonts.inter(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w700,
-                                            color: _typeColor,
-                                          ),
-                                        ),
-                                      ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      widget.record.subtype,
+                                      style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant),
+                                    ),
                                   ],
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 18),
-                          Container(height: 1, color: OV.outlineVariant.withOpacity(0.3)),
+                          const SizedBox(height: 16),
+                          Container(height: 1, color: OV.outlineVariant.withOpacity(0.4)),
                           const SizedBox(height: 16),
                           _MetaRow(icon: Icons.local_hospital_outlined, label: 'Facility', value: widget.record.facility),
                           if (widget.record.doctorName.isNotEmpty) ...[
@@ -396,37 +397,41 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
 
                     const SizedBox(height: 16),
 
-                    // ── Preview Area ──────────────────────────────────
-                    Container(
-                      width: double.infinity,
-                      height: 280,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.04),
-                            blurRadius: 12,
-                            offset: const Offset(0, 3),
-                          )
-                        ],
-                      ),
-                      child: widget.record.fileUrl.isNotEmpty
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(20),
-                              child: Image.network(
-                                widget.record.fileUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => _PreviewPlaceholder(record: widget.record),
-                              ),
+                    // ── Prescription Details or File Preview ─────────────────────────
+                    if (_isPrescription) ...[
+                      _buildPrescriptionDetailsCard(),
+                      const SizedBox(height: 16),
+                    ] else ...[
+                      Container(
+                        width: double.infinity,
+                        height: 280,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 12,
+                              offset: const Offset(0, 3),
                             )
-                          : _PreviewPlaceholder(record: widget.record),
-                    ),
-
-                    const SizedBox(height: 16),
+                          ],
+                        ),
+                        child: widget.record.fileUrl.isNotEmpty
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.network(
+                                  widget.record.fileUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => _PreviewPlaceholder(record: widget.record),
+                                ),
+                              )
+                            : _PreviewPlaceholder(record: widget.record),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
 
                     // ── Summary / Notes ───────────────────────────────
-                    if (widget.record.summary.isNotEmpty)
+                    if (widget.record.summary.isNotEmpty && !_isPrescription) ...[
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -445,7 +450,7 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                           children: [
                             Row(
                               children: [
-                                Icon(Icons.summarize_outlined, size: 18, color: OV.primary),
+                                const Icon(Icons.summarize_outlined, size: 18, color: OV.primary),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Clinical Summary',
@@ -471,32 +476,10 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 16),
+                    ],
 
-                    const SizedBox(height: 16),
-
-                    // ── HIPAA Security Badge ──────────────────────────
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: OV.tertiaryContainer.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: OV.tertiary.withOpacity(0.2)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.verified_user_outlined, size: 18, color: OV.tertiary),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'This record is end-to-end encrypted and HIPAA-compliant.',
-                              style: GoogleFonts.inter(fontSize: 12, color: OV.tertiary, height: 1.4),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),
@@ -509,51 +492,223 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
                 color: Colors.white,
                 border: Border(top: BorderSide(color: OV.outlineVariant.withOpacity(0.4))),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _verifying || _downloadingAndVerifying ? null : _verifyDownloadedBytes,
-                      icon: _downloadingAndVerifying
-                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.security_rounded, size: 16),
-                      label: Text(
-                        _downloadingAndVerifying ? 'Checking...' : 'Verify Hash',
-                        style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+              child: _isPrescription && widget.record.fileUrl.isEmpty
+                  ? SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _verifying ? null : _performInitialLedgerVerification,
+                        icon: _verifying
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.verified_user_outlined, size: 16),
+                        label: Text(
+                          _verifying ? 'Checking Fabric Ledger...' : 'Verify Integrity',
+                          style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: OV.slateDark,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: OV.onSurface,
-                        side: BorderSide(color: OV.outlineVariant),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _verifying || _downloadingAndVerifying ? null : _verifyDownloadedBytes,
+                            icon: _downloadingAndVerifying
+                                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.security_rounded, size: 16),
+                            label: Text(
+                              _downloadingAndVerifying ? 'Checking...' : 'Verify Integrity',
+                              style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: OV.onSurface,
+                              side: const BorderSide(color: OV.outlineVariant),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton.icon(
+                            onPressed: () {},
+                            icon: const Icon(Icons.download_rounded, size: 16),
+                            label: Text(
+                              'Download PDF',
+                              style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: OV.slateDark,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.download_rounded, size: 16),
-                      label: Text(
-                        'Download PDF',
-                        style: GoogleFonts.manrope(fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: OV.slateDark,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPrescriptionDetailsCard() {
+    final drugs = widget.record.prescribedDrugs;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: OV.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.medication_rounded, size: 18, color: OV.primary),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Prescription Details',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: OV.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(height: 1, color: OV.outlineVariant.withOpacity(0.3)),
+          const SizedBox(height: 14),
+          if (drugs.isNotEmpty)
+            ...drugs.map((d) {
+              final name = d['name']?.toString() ?? 'Medication';
+              final dosage = d['dosage']?.toString();
+              final freq = d['frequency']?.toString();
+              final duration = d['duration']?.toString();
+              final route = d['route']?.toString();
+              final instructions = d['instructions']?.toString();
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: OV.surfaceLow,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: OV.outlineVariant.withOpacity(0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          name,
+                          style: GoogleFonts.manrope(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: OV.onSurface,
+                          ),
+                        ),
+                        if (dosage != null && dosage.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: OV.primaryContainer,
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            child: Text(
+                              dosage,
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: OV.primary,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 6,
+                      children: [
+                        if (freq != null && freq.isNotEmpty)
+                          _drugMeta(Icons.schedule_rounded, freq),
+                        if (duration != null && duration.isNotEmpty)
+                          _drugMeta(Icons.date_range_rounded, duration),
+                        if (route != null && route.isNotEmpty)
+                          _drugMeta(Icons.directions_rounded, route),
+                      ],
+                    ),
+                    if (instructions != null && instructions.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Instructions: $instructions',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: OV.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            })
+          else ...[
+            Text(
+              widget.record.summary.isNotEmpty
+                  ? widget.record.summary
+                  : 'No specific medications listed.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: OV.onSurface,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _drugMeta(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: OV.outline),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant, fontWeight: FontWeight.w500),
+        ),
+      ],
     );
   }
 
@@ -576,6 +731,14 @@ class _ReportViewerScreenState extends State<ReportViewerScreen> {
         icon = Icons.verified_rounded;
         title = 'Blockchain Verified (Fabric)';
         subtitle = 'Cryptographic record integrity and origin confirmed on oncovault-channel.';
+        break;
+      case FabricVerificationStatus.legacyMetadataVerified:
+        cardBg = const Color(0xFFFEF3C7);
+        borderColor = const Color(0xFFF59E0B);
+        iconColor = const Color(0xFFB45309);
+        icon = Icons.shield_outlined;
+        title = 'Legacy Metadata Verified';
+        subtitle = 'Record metadata is verified on Fabric, but clinical medication details are not covered under schema 1.0.';
         break;
       case FabricVerificationStatus.tamperedOrMismatch:
         cardBg = const Color(0xFFFEF2F2);
@@ -797,22 +960,6 @@ class _PreviewPlaceholder extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text('Tap Download to view the full file', style: GoogleFonts.inter(fontSize: 12, color: OV.onSurfaceVariant)),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(color: OV.primaryContainer, borderRadius: BorderRadius.circular(100)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.lock_outline_rounded, size: 12, color: OV.primary),
-                const SizedBox(width: 6),
-                Text(
-                  'AES-256 Encrypted',
-                  style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: OV.primary),
-                ),
-              ],
-            ),
-          ),
         ],
       );
 }

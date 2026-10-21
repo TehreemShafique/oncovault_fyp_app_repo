@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 /// Enumerates the verification status of a record on the Hyperledger Fabric ledger.
 enum FabricVerificationStatus {
   verified,
+  legacyMetadataVerified,
   tamperedOrMismatch,
   notAnchored,
   pending,
@@ -21,6 +22,8 @@ extension FabricVerificationStatusX on FabricVerificationStatus {
     switch (this) {
       case FabricVerificationStatus.verified:
         return 'VERIFIED';
+      case FabricVerificationStatus.legacyMetadataVerified:
+        return 'LEGACY_METADATA_VERIFIED';
       case FabricVerificationStatus.tamperedOrMismatch:
         return 'TAMPERED_OR_MISMATCH';
       case FabricVerificationStatus.notAnchored:
@@ -36,6 +39,8 @@ extension FabricVerificationStatusX on FabricVerificationStatus {
     switch (s?.toUpperCase()) {
       case 'VERIFIED':
         return FabricVerificationStatus.verified;
+      case 'LEGACY_METADATA_VERIFIED':
+        return FabricVerificationStatus.legacyMetadataVerified;
       case 'TAMPERED_OR_MISMATCH':
         return FabricVerificationStatus.tamperedOrMismatch;
       case 'NOT_ANCHORED':
@@ -101,25 +106,40 @@ class FabricProofInfo {
 
 /// Represents the cryptographic outcome of verifying a medical record against Hyperledger Fabric.
 class FabricVerificationResult {
+  /// HTTP failure context, kept separate from the ledger integrity status.
+  final int? httpStatusCode;
   final bool verified;
   final FabricVerificationStatus status;
   final String recordId;
   final String targetHash;
   final FabricProofInfo? proof;
   final String message;
+  final String? schemaVersion;
+  final bool comprehensiveDrugIntegrity;
 
   const FabricVerificationResult({
+    this.httpStatusCode,
     required this.verified,
     required this.status,
     required this.recordId,
     required this.targetHash,
     this.proof,
     required this.message,
+    this.schemaVersion,
+    this.comprehensiveDrugIntegrity = false,
   });
 
   factory FabricVerificationResult.fromJson(Map<String, dynamic> json) {
     final statusStr = json['status']?.toString();
-    final proofJson = json['proof'];
+    final proofJson = json['proof'] ?? json['ledgerProof'];
+    String? schemaVer = json['schemaVersion']?.toString();
+    if (schemaVer == null && proofJson is Map) {
+      final meta = proofJson['metadata'];
+      if (meta is Map) {
+        schemaVer = meta['schemaVersion']?.toString();
+      }
+    }
+
     return FabricVerificationResult(
       verified: json['verified'] == true,
       status: FabricVerificationStatusX.fromString(statusStr),
@@ -129,6 +149,8 @@ class FabricVerificationResult {
           ? FabricProofInfo.fromJson(proofJson)
           : null,
       message: json['message']?.toString() ?? '',
+      schemaVersion: schemaVer,
+      comprehensiveDrugIntegrity: json['comprehensiveDrugIntegrity'] == true,
     );
   }
 }
@@ -192,10 +214,13 @@ class FabricGatewayService {
     if (_customBaseUrl != null && _customBaseUrl!.trim().isNotEmpty) {
       return _customBaseUrl!.trim().replaceAll(RegExp(r'/+$'), '');
     }
-    const int gatewayPort = int.fromEnvironment('FABRIC_GATEWAY_PORT', defaultValue: 5001);
+    const int gatewayPort =
+        int.fromEnvironment('FABRIC_GATEWAY_PORT', defaultValue: 5001);
     if (!kIsWeb && Platform.isAndroid) {
-      const bool useAdbReverse = bool.fromEnvironment('USE_ADB_REVERSE', defaultValue: true);
-      const bool useEmulators = bool.fromEnvironment('USE_FIREBASE_EMULATORS', defaultValue: false);
+      const bool useAdbReverse =
+          bool.fromEnvironment('USE_ADB_REVERSE', defaultValue: true);
+      const bool useEmulators =
+          bool.fromEnvironment('USE_FIREBASE_EMULATORS', defaultValue: false);
       if (useAdbReverse || useEmulators) {
         return 'http://127.0.0.1:$gatewayPort';
       }
@@ -246,11 +271,11 @@ class FabricGatewayService {
   // ── Health & Availability ──────────────────────────────────────────
 
   /// Checks if the Fabric Gateway is online and reachable.
-  Future<bool> isGatewayAvailable({Duration timeout = const Duration(seconds: 3)}) async {
+  Future<bool> isGatewayAvailable(
+      {Duration timeout = const Duration(seconds: 3)}) async {
     try {
-      final res = await _client
-          .get(Uri.parse('$baseUrl/health'))
-          .timeout(timeout);
+      final res =
+          await _client.get(Uri.parse('$baseUrl/health')).timeout(timeout);
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -258,11 +283,11 @@ class FabricGatewayService {
   }
 
   /// Fetches gateway and dependency readiness status.
-  Future<Map<String, dynamic>> checkReady({Duration timeout = const Duration(seconds: 5)}) async {
+  Future<Map<String, dynamic>> checkReady(
+      {Duration timeout = const Duration(seconds: 5)}) async {
     try {
-      final res = await _client
-          .get(Uri.parse('$baseUrl/ready'))
-          .timeout(timeout);
+      final res =
+          await _client.get(Uri.parse('$baseUrl/ready')).timeout(timeout);
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       return {
@@ -312,7 +337,8 @@ class FabricGatewayService {
     } on TimeoutException {
       throw const FabricGatewayException(
         code: 'TIMEOUT',
-        message: 'Anchoring request timed out waiting for Fabric ledger endorsement.',
+        message:
+            'Anchoring request timed out waiting for Fabric ledger endorsement.',
         statusCode: 504,
       );
     }
@@ -353,6 +379,7 @@ class FabricGatewayService {
     } catch (e) {
       if (e is FabricGatewayException) {
         return FabricVerificationResult(
+          httpStatusCode: e.statusCode,
           verified: false,
           status: FabricVerificationStatus.verificationUnavailable,
           recordId: recordId,
@@ -377,7 +404,8 @@ class FabricGatewayService {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final queryParams = patientId != null ? '?patientId=$patientId' : '';
-    final uri = Uri.parse('$baseUrl/api/v1/records/$recordId/proof$queryParams');
+    final uri =
+        Uri.parse('$baseUrl/api/v1/records/$recordId/proof$queryParams');
     final headers = await _headers();
 
     try {
@@ -400,7 +428,8 @@ class FabricGatewayService {
     Duration timeout = const Duration(seconds: 15),
   }) async {
     final queryParams = patientId != null ? '?patientId=$patientId' : '';
-    final uri = Uri.parse('$baseUrl/api/v1/records/$recordId/history$queryParams');
+    final uri =
+        Uri.parse('$baseUrl/api/v1/records/$recordId/history$queryParams');
     final headers = await _headers();
 
     try {
@@ -466,6 +495,23 @@ class FabricGatewayService {
     return _parseResponse(res);
   }
 
+  /// Resolves only an existing consent operation; never submits a new ledger mutation.
+  Future<Map<String, dynamic>> reconcileConsent({
+    required String providerId,
+    required String scope,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    final headers = await _headers();
+    final response = await _client
+        .post(
+          Uri.parse('$baseUrl/api/v1/consent/reconcile'),
+          headers: headers,
+          body: jsonEncode({'providerId': providerId, 'scope': scope}),
+        )
+        .timeout(timeout);
+    return _parseResponse(response);
+  }
+
   /// Evaluates whether an active consent grant exists on the Fabric ledger.
   Future<Map<String, dynamic>> checkConsent({
     required String patientId,
@@ -500,7 +546,11 @@ class FabricGatewayService {
     if (history is List) {
       return history.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     }
-    return [];
+    throw const FabricGatewayException(
+      code: 'INVALID_GATEWAY_RESPONSE',
+      message: 'Consent history was missing from the gateway response.',
+      statusCode: 502,
+    );
   }
 
   // ── Safe Response Parser ───────────────────────────────────────────
@@ -526,7 +576,8 @@ class FabricGatewayService {
     }
 
     final errorObj = body['error'];
-    final code = errorObj is Map ? errorObj['code']?.toString() ?? 'ERROR' : 'ERROR';
+    final code =
+        errorObj is Map ? errorObj['code']?.toString() ?? 'ERROR' : 'ERROR';
     final msg = errorObj is Map
         ? errorObj['message']?.toString() ?? 'Gateway error'
         : body['message']?.toString() ?? 'Gateway error';

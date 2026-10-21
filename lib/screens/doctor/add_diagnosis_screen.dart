@@ -6,31 +6,44 @@ import '../../models/doctor_model.dart';
 import '../../services/doctor_service.dart';
 import '../../services/fabric_gateway_service.dart';
 import 'doctor_widgets.dart';
-import 'voice_notes_screen.dart';
 
 class AddDiagnosisScreen extends StatefulWidget {
   final String patientId, patientName, doctorId, doctorName;
-  const AddDiagnosisScreen({super.key, required this.patientId,
-    required this.patientName, required this.doctorId, required this.doctorName});
+  final DoctorService? service;
+  const AddDiagnosisScreen(
+      {super.key,
+      this.service,
+      required this.patientId,
+      required this.patientName,
+      required this.doctorId,
+      required this.doctorName});
   @override
   State<AddDiagnosisScreen> createState() => _AddDiagnosisScreenState();
 }
 
 class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
-  final _service = DoctorService();
+  late final _service = widget.service ?? DoctorService();
   final _formKey = GlobalKey<FormState>();
 
-  final _diagnosisTitleCtrl  = TextEditingController();
+  final _diagnosisTitleCtrl = TextEditingController();
   final _diagnosisDetailCtrl = TextEditingController();
-  final _prescriptionCtrl    = TextEditingController();
-  final _cancerTypeCtrl      = TextEditingController();
+  final _prescriptionCtrl = TextEditingController();
+  final _cancerTypeCtrl = TextEditingController();
 
   String _selectedStatus = 'stable';
-  String _selectedStage  = '';
+  String _selectedStage = '';
   bool _isLoading = false;
 
   final _statuses = ['stable', 'monitoring', 'follow-up', 'critical'];
-  final _stages   = ['', 'Stage I', 'Stage II', 'Stage III', 'Stage IV', 'Remission', 'Post-Op'];
+  final _stages = [
+    '',
+    'Stage I',
+    'Stage II',
+    'Stage III',
+    'Stage IV',
+    'Remission',
+    'Post-Op'
+  ];
 
   @override
   void dispose() {
@@ -47,20 +60,20 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
     try {
       final entry = DiagnosisEntry(
         id: '',
-        patientId:        widget.patientId,
-        patientName:      widget.patientName,
-        doctorId:         widget.doctorId,
-        doctorName:       widget.doctorName,
-        diagnosisTitle:   _diagnosisTitleCtrl.text.trim(),
+        patientId: widget.patientId,
+        patientName: widget.patientName,
+        doctorId: widget.doctorId,
+        doctorName: widget.doctorName,
+        diagnosisTitle: _diagnosisTitleCtrl.text.trim(),
         diagnosisDetails: _diagnosisDetailCtrl.text.trim(),
-        prescription:     _prescriptionCtrl.text.trim(),
-        clinicalNotes:    '',
-        recommendations:  '',
-        cancerType:       _cancerTypeCtrl.text.trim(),
-        stage:            _selectedStage,
-        status:           _selectedStatus,
-        blockchainVerified: true,
-        createdAt:        DateTime.now(),
+        prescription: _prescriptionCtrl.text.trim(),
+        clinicalNotes: '',
+        recommendations: '',
+        cancerType: _cancerTypeCtrl.text.trim(),
+        stage: _selectedStage,
+        status: _selectedStatus,
+        blockchainVerified: false,
+        createdAt: DateTime.now(),
       );
       await _service.addDiagnosis(entry);
       if (!mounted) return;
@@ -71,7 +84,8 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
           content: Text('Error: $e', style: GoogleFonts.inter(fontSize: 13)),
           backgroundColor: OV.error,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -88,7 +102,8 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
             padding: const EdgeInsets.all(28),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               Container(
-                  width: 64, height: 64,
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
                       color: OV.tertiaryContainer, shape: BoxShape.circle),
                   child: const Icon(Icons.check_circle_outline_rounded,
@@ -96,7 +111,8 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
               const SizedBox(height: 16),
               Text('Record Saved!',
                   style: GoogleFonts.manrope(
-                      fontSize: 20, fontWeight: FontWeight.w700,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
                       color: OV.onSurface)),
               const SizedBox(height: 8),
               Text(
@@ -105,10 +121,12 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
                       fontSize: 13, color: OV.onSurfaceVariant, height: 1.5),
                   textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              const BlockchainBadge(status: FabricVerificationStatus.notAnchored),
+              const BlockchainBadge(
+                  status: FabricVerificationStatus.notAnchored),
               const SizedBox(height: 24),
               SizedBox(
-                  width: double.infinity, height: 50,
+                  width: double.infinity,
+                  height: 50,
                   child: ElevatedButton(
                       onPressed: () {
                         Navigator.pop(context);
@@ -130,8 +148,8 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
         backgroundColor: OV.background,
-        body: SafeArea(child: Column(children: [
-
+        body: SafeArea(
+            child: Column(children: [
           // ── App Bar ──────────────────────────────────────────────
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -148,154 +166,177 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
                         child: const Icon(Icons.arrow_back_ios_new_rounded,
                             size: 16, color: OV.onSurface))),
                 const SizedBox(width: 12),
-                Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Add Diagnosis Note',
-                      style: GoogleFonts.manrope(
-                          fontSize: 16, fontWeight: FontWeight.w700,
-                          color: OV.onSurface)),
-                  Text('Patient: ${widget.patientName}',
-                      style: GoogleFonts.inter(
-                          fontSize: 11, color: OV.onSurfaceVariant)),
-                ])),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text('Add Diagnosis Note',
+                          style: GoogleFonts.manrope(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: OV.onSurface)),
+                      Text('Patient: ${widget.patientName}',
+                          style: GoogleFonts.inter(
+                              fontSize: 11, color: OV.onSurfaceVariant)),
+                    ])),
               ])),
 
           // ── Form ─────────────────────────────────────────────────
-          Expanded(child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(key: _formKey, child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+              child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Form(
+                      key: _formKey,
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // ── Diagnosis ──────────────────────────────────────
+                            _SectionLabel('Diagnosis'),
+                            const SizedBox(height: 8),
+                            _FormField(
+                                ctrl: _diagnosisTitleCtrl,
+                                hint: 'e.g. Stage III Adenocarcinoma',
+                                label: 'Diagnosis Title',
+                                icon: Icons.medical_services_outlined,
+                                validator: (v) =>
+                                    v == null || v.isEmpty ? 'Required' : null),
+                            const SizedBox(height: 10),
+                            _FormField(
+                                ctrl: _diagnosisDetailCtrl,
+                                hint: 'Describe the diagnosis in detail...',
+                                label: 'Diagnosis Details',
+                                icon: Icons.notes_rounded,
+                                maxLines: 3),
+                            const SizedBox(height: 10),
+                            _FormField(
+                                ctrl: _cancerTypeCtrl,
+                                hint: 'e.g. Adenocarcinoma, Lymphoma',
+                                label: 'Cancer Type (if applicable)',
+                                icon: Icons.category_outlined),
+                            const SizedBox(height: 14),
 
-                // ── Diagnosis ──────────────────────────────────────
-                _SectionLabel('Diagnosis'),
-                const SizedBox(height: 8),
-                _FormField(
-                    ctrl: _diagnosisTitleCtrl,
-                    hint: 'e.g. Stage III Adenocarcinoma',
-                    label: 'Diagnosis Title',
-                    icon: Icons.medical_services_outlined,
-                    validator: (v) =>
-                    v == null || v.isEmpty ? 'Required' : null),
-                const SizedBox(height: 10),
-                _FormField(
-                    ctrl: _diagnosisDetailCtrl,
-                    hint: 'Describe the diagnosis in detail...',
-                    label: 'Diagnosis Details',
-                    icon: Icons.notes_rounded,
-                    maxLines: 3),
-                const SizedBox(height: 10),
-                _FormField(
-                    ctrl: _cancerTypeCtrl,
-                    hint: 'e.g. Adenocarcinoma, Lymphoma',
-                    label: 'Cancer Type (if applicable)',
-                    icon: Icons.category_outlined),
-                const SizedBox(height: 14),
+                            // ── Stage & Status row ─────────────────────────────
+                            Row(children: [
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                    _SectionLabel('Stage'),
+                                    const SizedBox(height: 8),
+                                    Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                        decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                                color: OV.outlineVariant
+                                                    .withOpacity(0.6))),
+                                        child: DropdownButtonHideUnderline(
+                                            child: DropdownButton<String>(
+                                                value: _selectedStage,
+                                                isExpanded: true,
+                                                style: GoogleFonts.inter(
+                                                    fontSize: 13,
+                                                    color: OV.onSurface),
+                                                items: _stages
+                                                    .map((s) => DropdownMenuItem(
+                                                        value: s,
+                                                        child: Text(
+                                                            s.isEmpty ? 'Select stage' : s,
+                                                            style: GoogleFonts.inter(fontSize: 13, color: s.isEmpty ? OV.outline : OV.onSurface))))
+                                                    .toList(),
+                                                onChanged: (v) => setState(() => _selectedStage = v ?? '')))),
+                                  ])),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                    _SectionLabel('Status'),
+                                    const SizedBox(height: 8),
+                                    Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                        decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                                color: OV.outlineVariant
+                                                    .withOpacity(0.6))),
+                                        child: DropdownButtonHideUnderline(
+                                            child: DropdownButton<String>(
+                                                value: _selectedStatus,
+                                                isExpanded: true,
+                                                style: GoogleFonts.inter(
+                                                    fontSize: 13,
+                                                    color: OV.onSurface),
+                                                items: _statuses
+                                                    .map((s) => DropdownMenuItem(
+                                                        value: s,
+                                                        child: Text(
+                                                            s[0].toUpperCase() + s.substring(1),
+                                                            style: GoogleFonts.inter(fontSize: 13, color: OV.onSurface))))
+                                                    .toList(),
+                                                onChanged: (v) => setState(() => _selectedStatus = v ?? 'stable')))),
+                                  ])),
+                            ]),
 
-                // ── Stage & Status row ─────────────────────────────
-                Row(children: [
-                  Expanded(child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    _SectionLabel('Stage'),
-                    const SizedBox(height: 8),
-                    Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: OV.outlineVariant.withOpacity(0.6))),
-                        child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                                value: _selectedStage,
-                                isExpanded: true,
-                                style: GoogleFonts.inter(
-                                    fontSize: 13, color: OV.onSurface),
-                                items: _stages.map((s) => DropdownMenuItem(
-                                    value: s,
-                                    child: Text(
-                                        s.isEmpty ? 'Select stage' : s,
-                                        style: GoogleFonts.inter(
-                                            fontSize: 13,
-                                            color: s.isEmpty
-                                                ? OV.outline
-                                                : OV.onSurface)))).toList(),
-                                onChanged: (v) => setState(
-                                        () => _selectedStage = v ?? '')))),
-                  ])),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    _SectionLabel('Status'),
-                    const SizedBox(height: 8),
-                    Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: OV.outlineVariant.withOpacity(0.6))),
-                        child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                                value: _selectedStatus,
-                                isExpanded: true,
-                                style: GoogleFonts.inter(
-                                    fontSize: 13, color: OV.onSurface),
-                                items: _statuses.map((s) => DropdownMenuItem(
-                                    value: s,
-                                    child: Text(
-                                        s[0].toUpperCase() + s.substring(1),
-                                        style: GoogleFonts.inter(
-                                            fontSize: 13,
-                                            color: OV.onSurface)))).toList(),
-                                onChanged: (v) => setState(
-                                        () => _selectedStatus =
-                                        v ?? 'stable')))),
-                  ])),
-                ]),
+                            const SizedBox(height: 20),
 
-                const SizedBox(height: 20),
+                            // ── Prescription ───────────────────────────────────
+                            _SectionLabel('Prescription'),
+                            const SizedBox(height: 8),
+                            _FormField(
+                                ctrl: _prescriptionCtrl,
+                                hint:
+                                    'e.g. Gemcitabine 1000mg/m² IV + Nab-paclitaxel 125mg/m², Day 1, 8, 15 of 28-day cycle',
+                                label: 'Prescription Details',
+                                icon: Icons.medication_outlined,
+                                maxLines: 3),
 
-                // ── Prescription ───────────────────────────────────
-                _SectionLabel('Prescription'),
-                const SizedBox(height: 8),
-                _FormField(
-                    ctrl: _prescriptionCtrl,
-                    hint: 'e.g. Gemcitabine 1000mg/m² IV + Nab-paclitaxel 125mg/m², Day 1, 8, 15 of 28-day cycle',
-                    label: 'Prescription Details',
-                    icon: Icons.medication_outlined,
-                    maxLines: 3),
+                            const SizedBox(height: 20),
 
-                const SizedBox(height: 20),
+                            // ── Blockchain notice ──────────────────────────────
+                            Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                    color:
+                                        OV.tertiaryContainer.withOpacity(0.5),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                        color: OV.tertiary.withOpacity(0.2))),
+                                child: Row(children: [
+                                  Icon(Icons.verified_rounded,
+                                      size: 16, color: OV.tertiary),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                      child: Text(
+                                          'This record will be cryptographically signed and stored on the blockchain for immutable verification.',
+                                          style: GoogleFonts.inter(
+                                              fontSize: 11,
+                                              color: OV.tertiary,
+                                              height: 1.4))),
+                                ])),
 
-                // ── Blockchain notice ──────────────────────────────
-                Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                        color: OV.tertiaryContainer.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: OV.tertiary.withOpacity(0.2))),
-                    child: Row(children: [
-                      Icon(Icons.verified_rounded, size: 16, color: OV.tertiary),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(
-                          'This record will be cryptographically signed and stored on the blockchain for immutable verification.',
-                          style: GoogleFonts.inter(
-                              fontSize: 11, color: OV.tertiary, height: 1.4))),
-                    ])),
-
-                const SizedBox(height: 24),
-              ])))),
+                            const SizedBox(height: 24),
+                          ])))),
 
           // ── Save Button ───────────────────────────────────────────
           Container(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
               decoration: BoxDecoration(
                   color: Colors.white,
-                  border: Border(top: BorderSide(
-                      color: OV.outlineVariant.withOpacity(0.4)))),
+                  border: Border(
+                      top: BorderSide(
+                          color: OV.outlineVariant.withOpacity(0.4)))),
               child: SizedBox(
-                  width: double.infinity, height: 52,
+                  width: double.infinity,
+                  height: 52,
                   child: ElevatedButton(
                       onPressed: _isLoading ? null : _save,
                       style: ElevatedButton.styleFrom(
@@ -305,19 +346,21 @@ class _AddDiagnosisScreenState extends State<AddDiagnosisScreen> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14))),
                       child: _isLoading
-                          ? const SizedBox(width: 22, height: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
                           : Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.save_rounded, size: 18),
-                            const SizedBox(width: 8),
-                            Text('Save Medical Record',
-                                style: GoogleFonts.manrope(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600)),
-                          ])))),
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                  const Icon(Icons.save_rounded, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text('Save Medical Record',
+                                      style: GoogleFonts.manrope(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600)),
+                                ])))),
         ])));
   }
 }
@@ -367,17 +410,17 @@ class _FormField extends StatelessWidget {
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide:
-              BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
+                  BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
           enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide:
-              BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
+                  BorderSide(color: OV.outlineVariant.withOpacity(0.6))),
           focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: const BorderSide(color: OV.primary, width: 1.5)),
           errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: const BorderSide(color: OV.error)),
-          contentPadding: const EdgeInsets.symmetric(
-              vertical: 14.0, horizontal: 12)));
+          contentPadding:
+              const EdgeInsets.symmetric(vertical: 14.0, horizontal: 12)));
 }

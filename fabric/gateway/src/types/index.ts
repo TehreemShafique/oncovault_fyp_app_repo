@@ -17,6 +17,7 @@ export interface AuthenticatedRequest extends Express.Request {
 
 export type RecordVerificationStatus =
   | 'VERIFIED'
+  | 'LEGACY_METADATA_VERIFIED'
   | 'TAMPERED_OR_MISMATCH'
   | 'NOT_ANCHORED'
   | 'PENDING'
@@ -44,6 +45,8 @@ export interface VerificationResult {
   targetHash: string;
   ledgerProof?: RecordProof;
   message: string;
+  schemaVersion?: string;
+  comprehensiveDrugIntegrity?: boolean;
 }
 
 export type ConsentStatus = 'GRANTED' | 'REVOKED' | 'EXPIRED' | 'NOT_FOUND';
@@ -54,7 +57,7 @@ export interface ConsentCheckResult {
   patientPseudoId: string;
   providerPseudoId: string;
   scope: string;
-  expirationTimestamp?: string;
+  expirationTimestamp?: string | null;
   revokedAt?: string | null;
   txId?: string;
   timestamp?: string;
@@ -66,7 +69,7 @@ export interface ConsentRecord {
   scope: string;
   status: ConsentStatus;
   grantedAt: string;
-  expirationTimestamp: string;
+  expirationTimestamp: string | null;
   txId: string;
   timestamp: string;
   submittingMspId: string;
@@ -108,4 +111,17 @@ export interface ApiResponse<T = any> {
     message: string;
     details?: any;
   };
+}
+
+/** Consent claims never expire into permission to resubmit. */
+export interface ConsentOperation extends DurableOperation {
+  operationType: 'GRANT_CONSENT' | 'REVOKE_CONSENT';
+  fingerprint: string;
+  guardId: string;
+  patientId: string;
+  providerId: string;
+  scope: string;
+  expirationTimestamp: string;
+  consent?: ConsentRecord;
+  projectionPending: boolean;
 }

@@ -1,784 +1,242 @@
-// test/unit/reconciliationWorker.test.ts
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { ReconciliationWorker } from '../../src/services/reconciliationWorker';
 import { RecordService } from '../../src/services/recordService';
+import { PseudonymService } from '../../src/services/pseudonymService';
+import { MemoryFirestore } from '../helpers/memoryFirestore';
 
-describe('ReconciliationWorker Unit Tests', () => {
-  let worker: ReconciliationWorker;
-  let mockFabricGateway: any;
-  let mockFirebaseAdmin: any;
-  let mockRecordService: any;
-  let mockFirestore: any;
-
-  const MOCK_NOTE_ID = 'note_sync_001';
-  const MOCK_PATIENT_ID = 'pat_sync_123';
-  const MOCK_AUTHOR_UID = 'nurse_sync_789';
-  const MOCK_HASH = 'a'.repeat(64);
-
-  let mockNoteData: Record<string, any>;
-  let mockDocRef: any;
-
-  beforeEach(() => {
-    mockNoteData = {
-      noteId: MOCK_NOTE_ID,
-      patientId: MOCK_PATIENT_ID,
-      authorUid: MOCK_AUTHOR_UID,
-      noteType: 'progress_note',
-      clinicalSummary: 'Patient stable, blood pressure normal.',
-      nurseReviewedTranscript: 'Patient vitals stable.',
-      narrativeObservations: 'Alert and oriented.',
-      careInterventions: 'IV fluids given.',
-      treatmentResponseNarrative: 'Responding well.',
-      supportedExtractedSymptoms: {},
-      amendmentOf: '',
-      amendmentReason: '',
-      createdAtIso: '2026-10-17T10:00:00.000Z',
-      status: 'SUBMITTED',
-      fabricStatus: 'PENDING',
-      fileHash: MOCK_HASH
-    };
-
-    mockDocRef = {
-      id: MOCK_NOTE_ID,
-      update: sinon.stub().resolves(),
-      get: sinon.stub().resolves({
-        exists: true,
-        id: MOCK_NOTE_ID,
-        data: () => ({ ...mockNoteData })
-      })
-    };
-
-    const mockSnapshot = {
-      docs: [
-        {
-          id: MOCK_NOTE_ID,
-          ref: mockDocRef,
-          data: () => ({ ...mockNoteData })
-        }
-      ]
-    };
-
-    const mockCollectionGroupQuery = {
-      where: sinon.stub().returnsThis(),
-      get: sinon.stub().callsFake(async () => ({
-        docs: [
-          {
-            id: MOCK_NOTE_ID,
-            ref: mockDocRef,
-            data: () => ({ ...mockNoteData })
-          }
-        ]
-      }))
-    };
-
-    mockFirestore = {
-      collectionGroup: sinon.stub().withArgs('clinical_notes').returns(mockCollectionGroupQuery),
-      collection: sinon.stub(),
-      doc: sinon.stub(),
-      runTransaction: sinon.stub().callsFake(async (callback) => {
-        const transaction = {
-          get: sinon.stub().callsFake(async (ref) => {
-            return {
-              exists: true,
-              id: MOCK_NOTE_ID,
-              data: () => ({ ...mockNoteData })
-            };
-          }),
-          update: sinon.stub().callsFake((ref, payload) => {
-            Object.assign(mockNoteData, payload);
-            mockDocRef.update(payload);
-          })
-        };
-        return await callback(transaction);
-      })
-    };
-
-    mockFabricGateway = {
-      evaluateTransaction: sinon.stub(),
-      submitTransaction: sinon.stub()
-    };
-
-    mockFirebaseAdmin = {
-      getFirestoreInstance: sinon.stub().returns(mockFirestore),
-      updateRecordProof: sinon.stub().resolves()
-    };
-
-    mockRecordService = {
-      computeCanonicalClinicalNoteHash: sinon.stub().returns(MOCK_HASH),
-      computeCanonicalTaskHash: sinon.stub().returns(MOCK_HASH),
-      computeCanonicalProgressHash: sinon.stub().returns(MOCK_HASH)
-    };
-
-    worker = new ReconciliationWorker(
-      mockFabricGateway,
-      mockFirebaseAdmin,
-      mockRecordService
-    );
-  });
-
-  afterEach(() => {
-    worker.stopPeriodicSweeper();
-    sinon.restore();
-  });
-
-  it('should successfully discover and anchor a PENDING clinical note on Fabric', async () => {
-    // 1. Existing ledger check returns nothing (fresh anchor)
-    mockFabricGateway.evaluateTransaction
-      .withArgs('GetRecordProof')
-      .rejects(new Error('Record not found'));
-
-    // 2. Submit transaction succeeds
-    mockFabricGateway.submitTransaction
-      .withArgs('AnchorRecordHash')
-      .resolves({
-        result: JSON.stringify({
-          recordId: 'rec_opaque_key',
-          sha256Hash: MOCK_HASH,
-          version: 1,
-          txId: 'tx_fabric_reconciled_123',
-          timestamp: '2026-10-17T10:05:00.000Z'
-        }),
-        txId: 'tx_fabric_reconciled_123'
-      });
-
-    // 3. Ledger verification returns verified
-    mockFabricGateway.evaluateTransaction
-      .withArgs('VerifyRecordHash')
-      .resolves(JSON.stringify({
-        verified: true,
-        status: 'VERIFIED',
-        sha256Hash: MOCK_HASH
-      }));
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.processed).to.equal(1);
-    expect(result.committed).to.equal(1);
-    expect(result.failed).to.equal(0);
-
-    // Verify Fabric submit was invoked with correct arguments
-    expect(mockFabricGateway.submitTransaction.calledOnce).to.be.true;
-    const submitArgs = mockFabricGateway.submitTransaction.firstCall.args;
-    expect(submitArgs[0]).to.equal('AnchorRecordHash');
-    expect(submitArgs[2]).to.equal(MOCK_HASH);
-
-    // Verify Firestore proof update was triggered
-    expect(mockFirebaseAdmin.updateRecordProof.calledOnce).to.be.true;
-    expect(mockDocRef.update.called).to.be.true;
-    const updatePayload = mockDocRef.update.lastCall.args[0];
-    expect(updatePayload.fabricStatus).to.equal('COMMITTED');
-    expect(updatePayload.fabricTxId).to.equal('tx_fabric_reconciled_123');
-  });
-
-  it('should detect tamper and fail permanently when recalculated hash does not match stored fileHash', async () => {
-    // Recalculated hash does not match stored hash
-    mockRecordService.computeCanonicalClinicalNoteHash.returns('b'.repeat(64));
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.processed).to.equal(1);
-    expect(result.committed).to.equal(0);
-    expect(result.failed).to.equal(1);
-
-    // Fabric submission must NEVER occur for tampered content
-    expect(mockFabricGateway.submitTransaction.called).to.be.false;
-
-    // Document marked as FAILED_PERMANENT
-    expect(mockDocRef.update.called).to.be.true;
-    const updatePayload = mockDocRef.update.lastCall.args[0];
-    expect(updatePayload.fabricStatus).to.equal('FAILED_PERMANENT');
-    expect(updatePayload.fabricError).to.include('tampering');
-  });
-
-  it('should idempotently recover when note is already anchored on chain without duplicate block creation', async () => {
-    // Existing ledger check returns matching proof
-    mockFabricGateway.evaluateTransaction
-      .withArgs('GetRecordProof')
-      .resolves(JSON.stringify({
-        recordId: 'rec_opaque_key',
-        sha256Hash: MOCK_HASH,
-        version: 1,
-        txId: 'tx_existing_onchain_proof',
-        timestamp: '2026-10-17T09:30:00.000Z'
-      }));
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.processed).to.equal(1);
-    expect(result.committed).to.equal(1);
-    expect(result.failed).to.equal(0);
-
-    // submitTransaction must NOT be called since proof is already valid on-chain
-    expect(mockFabricGateway.submitTransaction.called).to.be.false;
-
-    // Firestore marked COMMITTED with existing proof
-    expect(mockDocRef.update.called).to.be.true;
-    const updatePayload = mockDocRef.update.lastCall.args[0];
-    expect(updatePayload.fabricStatus).to.equal('COMMITTED');
-    expect(updatePayload.fabricTxId).to.equal('tx_existing_onchain_proof');
-  });
-
-  it('should mark FAILED_RETRYABLE on transient Fabric error and FAILED_PERMANENT after 5 retries', async () => {
-    mockFabricGateway.evaluateTransaction
-      .withArgs('GetRecordProof')
-      .rejects(new Error('Record not found'));
-
-    mockFabricGateway.submitTransaction
-      .withArgs('AnchorRecordHash')
-      .rejects(new Error('DEADLINE_EXCEEDED: Peer endorsement timeout'));
-
-    // Attempt 1: retryCount becomes 1 -> FAILED_RETRYABLE
-    const result1 = await worker.reconcilePendingClinicalNotes();
-    expect(result1.failed).to.equal(1);
-    expect(result1.committed).to.equal(0);
-
-    let updatePayload = mockDocRef.update.lastCall.args[0];
-    expect(updatePayload.fabricStatus).to.equal('FAILED_RETRYABLE');
-    expect(updatePayload.retryCount).to.equal(1);
-
-    // Simulate 4 prior retries (retryCount = 4) and eligible retry timestamp
-    mockNoteData.retryCount = 4;
-    mockNoteData.fabricStatus = 'FAILED_RETRYABLE';
-    mockNoteData.nextRetryAt = Date.now() - 1000;
-
-    const result2 = await worker.reconcilePendingClinicalNotes();
-    expect(result2.failed).to.equal(1);
-
-    updatePayload = mockDocRef.update.lastCall.args[0];
-    expect(updatePayload.fabricStatus).to.equal('FAILED_PERMANENT');
-    expect(updatePayload.retryCount).to.equal(5);
-  });
-
-  it('should reject stale worker whose lease token was superseded before committing', async () => {
-    mockFabricGateway.evaluateTransaction
-      .withArgs('GetRecordProof')
-      .rejects(new Error('Record not found'));
-
-    mockFabricGateway.submitTransaction
-      .withArgs('AnchorRecordHash')
-      .resolves({
-        result: JSON.stringify({
-          recordId: 'rec_opaque_key',
-          sha256Hash: MOCK_HASH,
-          version: 1,
-          txId: 'tx_fabric_stale_123',
-          timestamp: '2026-10-17T10:05:00.000Z'
-        }),
-        txId: 'tx_fabric_stale_123'
-      });
-
-    mockFabricGateway.evaluateTransaction
-      .withArgs('VerifyRecordHash')
-      .resolves(JSON.stringify({
-        verified: true,
-        status: 'VERIFIED',
-        sha256Hash: MOCK_HASH
-      }));
-
-    // Intercept runTransaction: on the second call (the commit transaction), simulate another worker has changed leaseToken
-    let txCount = 0;
-    mockFirestore.runTransaction = sinon.stub().callsFake(async (callback) => {
-      txCount++;
-      if (txCount === 1) {
-        // First transaction: lease acquisition
-        const transaction = {
-          get: sinon.stub().resolves({
-            exists: true,
-            id: MOCK_NOTE_ID,
-            data: () => ({ ...mockNoteData })
-          }),
-          update: sinon.stub().callsFake((ref, payload) => {
-            Object.assign(mockNoteData, payload);
-            mockDocRef.update(payload);
-          })
-        };
-        return await callback(transaction);
-      } else {
-        // Subsequent transaction: simulate superseded lease
-        const transaction = {
-          get: sinon.stub().resolves({
-            exists: true,
-            id: MOCK_NOTE_ID,
-            data: () => ({ ...mockNoteData, leaseToken: 'superseded-by-worker-B' })
-          }),
-          update: sinon.stub().callsFake((ref, payload) => {
-            Object.assign(mockNoteData, payload);
-            mockDocRef.update(payload);
-          })
-        };
-        return await callback(transaction);
-      }
+/** Reuses the isolated transaction fake; no Firebase initialization or network. */
+class WorkerStore extends MemoryFirestore {
+  beforeTransaction?: () => void;
+  updates = 0;
+  doc(path: string): any {
+    const ref: any = { path, id: path.split('/').pop() };
+    ref.get = async () => ({
+      exists: this.documents.has(path), ref, id: ref.id,
+      data: () => structuredClone(this.documents.get(path))
     });
+    return ref;
+  }
+  collection(name: string): any {
+    return {
+      doc: (id: string) => this.doc(name + '/' + id),
+      where: (field: string, _op: string, value: any) => ({
+        get: async () => ({
+          docs:
+            [...this.documents.entries()].filter(([p, d]) => p.startsWith(name + '/') && p.split('/').length === 2 && d[field] === value)
+              .map(([p]) => ({ ref: this.doc(p), data: () => structuredClone(this.documents.get(p)) }))
+        })
+      })
+    };
+  }
+  collectionGroup(name: string): any {
+    return {
+      where: (field: string, _op: string, values: string[]) => ({
+        get: async () => ({
+          docs:
+            [...this.documents.entries()].filter(([p, d]) => p.split('/').at(-2) === name && values.includes(d[field]))
+              .map(([p]) => ({ ref: this.doc(p), data: () => structuredClone(this.documents.get(p)) }))
+        })
+      })
+    };
+  }
+  async runTransaction<T>(callback: (t: any) => Promise<T>): Promise<T> {
+    this.beforeTransaction?.(); this.beforeTransaction = undefined;
+    return super.runTransaction(t => callback({
+      get: t.get, update: (ref: any, changes: any) => {
+        this.updates++; t.set(ref, changes, { merge: true });
+      }
+    }));
+  }
+}
 
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    // Commit must be rejected because lease token was superseded
-    expect(result.committed).to.equal(0);
-    expect(result.failed).to.equal(1);
-    expect(mockFirebaseAdmin.updateRecordProof.called).to.be.false;
-  });
-
-  it('should reconcile clinical notes in REVIEWED status without changing clinical status', async () => {
-    mockNoteData.status = 'REVIEWED';
-    mockNoteData.doctorReviewNotes = 'Verified and approved by Dr. Smith';
-    mockNoteData.reviewedByUid = 'doc_456';
-
-    mockFabricGateway.evaluateTransaction
-      .withArgs('GetRecordProof')
-      .rejects(new Error('Record not found'));
-
-    mockFabricGateway.submitTransaction
-      .withArgs('AnchorRecordHash')
-      .resolves({
-        result: JSON.stringify({
-          recordId: 'rec_opaque_key',
-          sha256Hash: MOCK_HASH,
-          version: 1,
-          txId: 'tx_fabric_reviewed_123',
-          timestamp: '2026-10-17T10:05:00.000Z'
-        }),
-        txId: 'tx_fabric_reviewed_123'
-      });
-
-    mockFabricGateway.evaluateTransaction
-      .withArgs('VerifyRecordHash')
-      .resolves(JSON.stringify({
-        verified: true,
-        status: 'VERIFIED',
-        sha256Hash: MOCK_HASH
-      }));
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.committed).to.equal(1);
-    expect(mockNoteData.fabricStatus).to.equal('COMMITTED');
-    expect(mockNoteData.status).to.equal('REVIEWED'); // Clinical status remains unchanged!
-  });
-
-  it('should skip candidate notes whose nextRetryAt is in the future', async () => {
-    mockNoteData.fabricStatus = 'FAILED_RETRYABLE';
-    mockNoteData.nextRetryAt = Date.now() + 60000; // 1 minute in future
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.processed).to.equal(0);
-    expect(result.committed).to.equal(0);
-    expect(result.failed).to.equal(0);
-    expect(mockFabricGateway.submitTransaction.called).to.be.false;
-  });
-
-  it('should never retry notes marked FAILED_PERMANENT', async () => {
-    mockNoteData.fabricStatus = 'FAILED_PERMANENT';
-
-    const result = await worker.reconcilePendingClinicalNotes();
-
-    expect(result.processed).to.equal(0);
-    expect(result.committed).to.equal(0);
-    expect(result.failed).to.equal(0);
-    expect(mockFabricGateway.submitTransaction.called).to.be.false;
-  });
-
-  it('should start and stop periodic sweeper loop without leaks', () => {
-    worker.startPeriodicSweeper(1000);
-    // Starting again is a no-op
-    worker.startPeriodicSweeper(1000);
-    worker.stopPeriodicSweeper();
-    // Stopping again is a no-op
-    worker.stopPeriodicSweeper();
-  });
-
-  describe('reconcilePendingTreatmentOperations', () => {
-    const MOCK_OP_TASK_ID = 'op_task_001';
-    const MOCK_TASK_ID = 'task_001';
-    const MOCK_PLAN_ID = 'plan_001';
-    const MOCK_PAT_ID = 'pat_101';
-    const MOCK_TASK_SOURCE_PATH = `patients/${MOCK_PAT_ID}/treatment_plans/${MOCK_PLAN_ID}/tasks/${MOCK_TASK_ID}`;
-
-    let mockOpData: Record<string, any>;
-    let mockTaskData: Record<string, any>;
-    let mockOpDocRef: any;
-    let mockTaskDocRef: any;
+for (const kind of ['note', 'task', 'progress'] as const) {
+  describe('Projection-only worker safety: ' + kind, () => {
+    let db: WorkerStore, fabric: any, worker: ReconciliationWorker, hash: string, proof: any, consent: any;
+    let sourcePath: string, queuedPath: string;
+    const txId = 'b'.repeat(64);
+    const patient = 'demo-patient', doctor = 'demo-doctor', nurse = 'demo-nurse', hospital = 'demo-hospital';
+    const recordId = 'demo-record', planId = 'demo-plan';
+    const treatment = kind !== 'note';
+    const records = new RecordService();
+    const copy = (d: any) => structuredClone(d);
+    const run = () => treatment ? worker.reconcilePendingTreatmentOperations() : worker.reconcilePendingClinicalNotes();
+    const patch = (path: string, value: any) => Object.assign(db.documents.get(path), value);
+    const makeWorker = () => new ReconciliationWorker(fabric, { getFirestoreInstance: () => db } as any, records);
 
     beforeEach(() => {
-      mockOpData = {
-        id: MOCK_OP_TASK_ID,
-        documentType: 'TREATMENT_PLAN',
-        recordType: 'TREATMENT_TASK_COMPLETION',
-        patientId: MOCK_PAT_ID,
-        planId: MOCK_PLAN_ID,
-        recordId: MOCK_TASK_ID,
-        sourceDocPath: MOCK_TASK_SOURCE_PATH,
-        status: 'PENDING'
-      };
-
-      mockTaskData = {
-        taskId: MOCK_TASK_ID,
-        planId: MOCK_PLAN_ID,
-        patientId: MOCK_PAT_ID,
-        status: 'completed',
-        completedByNurseId: 'nurse_123',
-        completedByNurseName: 'Nurse Joy',
-        completedAt: '2026-10-17T10:00:00.000Z',
-        title: 'Pre-hydration Saline',
-        instructions: '1L normal saline over 2 hours'
-      };
-
-      mockOpDocRef = {
-        id: MOCK_OP_TASK_ID,
-        update: sinon.stub().resolves(),
-        get: sinon.stub().callsFake(async () => ({
-          exists: true,
-          id: MOCK_OP_TASK_ID,
-          data: () => ({ ...mockOpData })
-        }))
-      };
-
-      mockTaskDocRef = {
-        id: MOCK_TASK_ID,
-        update: sinon.stub().resolves(),
-        get: sinon.stub().callsFake(async () => ({
-          exists: true,
-          id: MOCK_TASK_ID,
-          data: () => ({ ...mockTaskData })
-        }))
-      };
-
-      const mockOperationsQuery = {
-        where: sinon.stub().returnsThis(),
-        get: sinon.stub().callsFake(async () => ({
-          docs: [
-            {
-              id: MOCK_OP_TASK_ID,
-              ref: mockOpDocRef,
-              data: () => ({ ...mockOpData })
-            }
-          ]
-        }))
-      };
-
-      mockFirestore.collection.withArgs('gateway_operations').returns(mockOperationsQuery);
-      mockFirestore.doc.withArgs(MOCK_TASK_SOURCE_PATH).returns(mockTaskDocRef);
-
-      mockFirestore.runTransaction = sinon.stub().callsFake(async (callback) => {
-        const transaction = {
-          get: sinon.stub().callsFake(async (ref) => {
-            if (ref === mockOpDocRef || ref.id === MOCK_OP_TASK_ID) {
-              return {
-                exists: true,
-                id: MOCK_OP_TASK_ID,
-                data: () => ({ ...mockOpData })
-              };
-            }
-            if (ref === mockTaskDocRef || ref.id === MOCK_TASK_ID) {
-              return {
-                exists: true,
-                id: MOCK_TASK_ID,
-                data: () => ({ ...mockTaskData })
-              };
-            }
-            return { exists: false, data: () => null };
-          }),
-          update: sinon.stub().callsFake((ref, payload) => {
-            if (ref === mockOpDocRef || ref.id === MOCK_OP_TASK_ID) {
-              Object.assign(mockOpData, payload);
-              mockOpDocRef.update(payload);
-            }
-            if (ref === mockTaskDocRef || ref.id === MOCK_TASK_ID) {
-              Object.assign(mockTaskData, payload);
-              mockTaskDocRef.update(payload);
-            }
-          })
-        };
-        return await callback(transaction);
-      });
-    });
-
-    it('should successfully discover and anchor a PENDING treatment task completion', async () => {
-      mockFabricGateway.evaluateTransaction
-        .withArgs('GetRecordProof')
-        .rejects(new Error('Record not found'));
-
-      mockFabricGateway.submitTransaction
-        .withArgs('AnchorRecordHash')
-        .resolves({
-          result: JSON.stringify({
-            recordId: 'rec_task_opaque',
-            sha256Hash: MOCK_HASH,
-            version: 1,
-            txId: 'tx_treatment_task_123',
-            timestamp: '2026-10-17T10:05:00.000Z'
-          }),
-          txId: 'tx_treatment_task_123'
-        });
-
-      mockFabricGateway.evaluateTransaction
-        .withArgs('VerifyRecordHash')
-        .resolves(JSON.stringify({
-          verified: true,
-          status: 'VERIFIED',
-          sha256Hash: MOCK_HASH
-        }));
-
-      const result = await worker.reconcilePendingTreatmentOperations();
-
-      expect(result.processed).to.equal(1);
-      expect(result.committed).to.equal(1);
-      expect(result.failed).to.equal(0);
-
-      // Verify Fabric submission
-      expect(mockFabricGateway.submitTransaction.calledOnce).to.be.true;
-      const submitArgs = mockFabricGateway.submitTransaction.firstCall.args;
-      expect(submitArgs[0]).to.equal('AnchorRecordHash');
-      expect(submitArgs[2]).to.equal(MOCK_HASH);
-      const parsedMetadata = JSON.parse(submitArgs[3]);
-      expect(parsedMetadata.documentType).to.equal('TREATMENT_PLAN');
-      expect(parsedMetadata.recordType).to.equal('TREATMENT_TASK_COMPLETION');
-
-      // Verify Firestore status updates
-      expect(mockOpData.status).to.equal('COMMITTED');
-      expect(mockOpData.fabricTxId).to.equal('tx_treatment_task_123');
-      expect(mockTaskData.fabricStatus).to.equal('COMMITTED');
-      expect(mockTaskData.fabricTxId).to.equal('tx_treatment_task_123');
-    });
-
-    it('should successfully discover and anchor a PENDING treatment progress update', async () => {
-      const MOCK_OP_PROG_ID = 'op_prog_001';
-      const MOCK_PROG_ID = 'tp_001';
-      const MOCK_PROG_SOURCE_PATH = `patients/${MOCK_PAT_ID}/treatment_plans/${MOCK_PLAN_ID}/progress_updates/${MOCK_PROG_ID}`;
-
-      mockOpData = {
-        id: MOCK_OP_PROG_ID,
-        documentType: 'TREATMENT_PLAN',
-        recordType: 'TREATMENT_PROGRESS',
-        patientId: MOCK_PAT_ID,
-        planId: MOCK_PLAN_ID,
-        recordId: MOCK_PROG_ID,
-        sourceDocPath: MOCK_PROG_SOURCE_PATH,
-        status: 'PENDING'
-      };
-
-      const mockProgData: Record<string, any> = {
-        updateId: MOCK_PROG_ID,
-        planId: MOCK_PLAN_ID,
-        patientId: MOCK_PAT_ID,
-        authorUid: 'doc_456',
-        authorRole: 'doctor',
-        timestamp: '2026-10-17T11:00:00.000Z',
-        clinicalSummary: 'Tolerating chemotherapy regimen with minor fatigue.'
-      };
-
-      const mockProgDocRef = {
-        id: MOCK_PROG_ID,
-        update: sinon.stub().resolves(),
-        get: sinon.stub().callsFake(async () => ({
-          exists: true,
-          id: MOCK_PROG_ID,
-          data: () => ({ ...mockProgData })
-        }))
-      };
-
-      const mockProgOperationsQuery = {
-        where: sinon.stub().returnsThis(),
-        get: sinon.stub().callsFake(async () => ({
-          docs: [
-            {
-              id: MOCK_OP_PROG_ID,
-              ref: mockOpDocRef,
-              data: () => ({ ...mockOpData })
-            }
-          ]
-        }))
-      };
-
-      mockFirestore.collection.withArgs('gateway_operations').returns(mockProgOperationsQuery);
-      mockFirestore.doc.withArgs(MOCK_PROG_SOURCE_PATH).returns(mockProgDocRef);
-
-      mockFirestore.runTransaction = sinon.stub().callsFake(async (callback) => {
-        const transaction = {
-          get: sinon.stub().callsFake(async (ref) => {
-            if (ref === mockOpDocRef || ref.id === MOCK_OP_PROG_ID) {
-              return {
-                exists: true,
-                id: MOCK_OP_PROG_ID,
-                data: () => ({ ...mockOpData })
-              };
-            }
-            if (ref === mockProgDocRef || ref.id === MOCK_PROG_ID) {
-              return {
-                exists: true,
-                id: MOCK_PROG_ID,
-                data: () => ({ ...mockProgData })
-              };
-            }
-            return { exists: false, data: () => null };
-          }),
-          update: sinon.stub().callsFake((ref, payload) => {
-            if (ref === mockOpDocRef || ref.id === MOCK_OP_PROG_ID) {
-              Object.assign(mockOpData, payload);
-              mockOpDocRef.update(payload);
-            }
-            if (ref === mockProgDocRef || ref.id === MOCK_PROG_ID) {
-              Object.assign(mockProgData, payload);
-              mockProgDocRef.update(payload);
-            }
-          })
-        };
-        return await callback(transaction);
-      });
-
-      mockFabricGateway.evaluateTransaction
-        .withArgs('GetRecordProof')
-        .rejects(new Error('Record not found'));
-
-      mockFabricGateway.submitTransaction
-        .withArgs('AnchorRecordHash')
-        .resolves({
-          result: JSON.stringify({
-            recordId: 'rec_prog_opaque',
-            sha256Hash: MOCK_HASH,
-            version: 1,
-            txId: 'tx_prog_anchor_456',
-            timestamp: '2026-10-17T11:05:00.000Z'
-          }),
-          txId: 'tx_prog_anchor_456'
-        });
-
-      mockFabricGateway.evaluateTransaction
-        .withArgs('VerifyRecordHash')
-        .resolves(JSON.stringify({
-          verified: true,
-          status: 'VERIFIED',
-          sha256Hash: MOCK_HASH
-        }));
-
-      const result = await worker.reconcilePendingTreatmentOperations();
-
-      expect(result.processed).to.equal(1);
-      expect(result.committed).to.equal(1);
-      expect(result.failed).to.equal(0);
-
-      const submitArgs = mockFabricGateway.submitTransaction.firstCall.args;
-      const parsedMetadata = JSON.parse(submitArgs[3]);
-      expect(parsedMetadata.documentType).to.equal('TREATMENT_PLAN');
-      expect(parsedMetadata.recordType).to.equal('TREATMENT_PROGRESS');
-      expect(mockOpData.status).to.equal('COMMITTED');
-      expect(mockProgData.fabricStatus).to.equal('COMMITTED');
-    });
-
-    it('should idempotently recover when treatment task is already anchored on chain', async () => {
-      mockFabricGateway.evaluateTransaction
-        .withArgs('GetRecordProof')
-        .resolves(JSON.stringify({
-          recordId: 'rec_task_opaque',
-          sha256Hash: MOCK_HASH,
-          version: 1,
-          txId: 'tx_existing_task_proof',
-          timestamp: '2026-10-17T09:00:00.000Z'
-        }));
-
-      const result = await worker.reconcilePendingTreatmentOperations();
-
-      expect(result.processed).to.equal(1);
-      expect(result.committed).to.equal(1);
-      expect(result.failed).to.equal(0);
-
-      // submitTransaction must NOT be called
-      expect(mockFabricGateway.submitTransaction.called).to.be.false;
-
-      // Status marked COMMITTED with existing proof
-      expect(mockOpData.status).to.equal('COMMITTED');
-      expect(mockOpData.fabricTxId).to.equal('tx_existing_task_proof');
-      expect(mockTaskData.fabricStatus).to.equal('COMMITTED');
-      expect(mockTaskData.fabricTxId).to.equal('tx_existing_task_proof');
-    });
-
-    it('should reject stale worker whose lease token was superseded before committing treatment operation', async () => {
-      mockFabricGateway.evaluateTransaction
-        .withArgs('GetRecordProof')
-        .rejects(new Error('Record not found'));
-
-      mockFabricGateway.submitTransaction
-        .withArgs('AnchorRecordHash')
-        .resolves({
-          result: JSON.stringify({
-            recordId: 'rec_task_opaque',
-            sha256Hash: MOCK_HASH,
-            version: 1,
-            txId: 'tx_stale_123',
-            timestamp: '2026-10-17T10:05:00.000Z'
-          }),
-          txId: 'tx_stale_123'
-        });
-
-      mockFabricGateway.evaluateTransaction
-        .withArgs('VerifyRecordHash')
-        .resolves(JSON.stringify({
-          verified: true,
-          status: 'VERIFIED',
-          sha256Hash: MOCK_HASH
-        }));
-
-      let txCount = 0;
-      mockFirestore.runTransaction = sinon.stub().callsFake(async (callback) => {
-        txCount++;
-        if (txCount === 1) {
-          // Lease acquisition transaction
-          const transaction = {
-            get: sinon.stub().resolves({
-              exists: true,
-              id: MOCK_OP_TASK_ID,
-              data: () => ({ ...mockOpData })
-            }),
-            update: sinon.stub().callsFake((ref, payload) => {
-              Object.assign(mockOpData, payload);
-            })
-          };
-          return await callback(transaction);
-        } else {
-          // Second transaction (commit): simulate superseded lease token
-          const transaction = {
-            get: sinon.stub().resolves({
-              exists: true,
-              id: MOCK_OP_TASK_ID,
-              data: () => ({ ...mockOpData, leaseToken: 'superseded-lease-token' })
-            }),
-            update: sinon.stub()
-          };
-          return await callback(transaction);
+      db = new WorkerStore();
+      for (const [path, data] of Object.entries({
+        ['patients/' + patient]: { hospitalId: hospital },
+        ['users/' + patient]: { role: 'patient' },
+        ['users/' + doctor]: { role: 'doctor', hospitalId: hospital },
+        ['doctors/' + doctor]: { uid: doctor },
+        ['users/' + nurse]: { role: 'nurse', hospitalId: hospital },
+        ['nurse_patient_assignments/' + nurse + '_' + patient]: { nurseId: nurse, patientId: patient, status: 'active', hospitalId: hospital },
+        ['patients/' + patient + '/treatment_plans/' + planId]: { patientId: patient, hospitalId: hospital, doctorId: doctor, status: 'active' }
+      })) db.documents.set(path, data);
+      const source: any = kind === 'note'
+        ? {
+          noteId: recordId, patientId: patient, authorUid: doctor, hospitalId: hospital, noteType: 'progress_note',
+          status: 'SUBMITTED', fabricStatus: 'PENDING', createdAtIso: '2026-01-01T00:00:00.000Z', clinicalSummary: 'Fictional demonstration note.'
         }
+        : kind === 'task'
+          ? { taskId: recordId, patientId: patient, planId, completedByNurseId: nurse, status: 'completed', completedAt: '2026-01-01T00:00:00.000Z', fabricStatus: 'PENDING' }
+          : { updateId: recordId, patientId: patient, planId, authorUid: nurse, timestamp: '2026-01-01T00:00:00.000Z', fabricStatus: 'PENDING', clinicalSummary: 'Fictional progress.' };
+      hash = kind === 'note' ? records.computeCanonicalClinicalNoteHash(source) : kind === 'task' ? records.computeCanonicalTaskHash(source) : records.computeCanonicalProgressHash(source);
+      source.fileHash = hash;
+      sourcePath = 'patients/' + patient + (kind === 'note' ? '/clinical_notes/' : '/treatment_plans/' + planId + (kind === 'task' ? '/tasks/' : '/progress_updates/')) + recordId;
+      db.documents.set(sourcePath, source);
+      queuedPath = treatment ? 'gateway_operations/demo-operation' : sourcePath;
+      if (treatment) db.documents.set(queuedPath, {
+        operationId: 'demo-operation', operationType: 'ANCHOR_RECORD', documentType: 'TREATMENT_PLAN',
+        recordType: kind === 'task' ? 'TREATMENT_TASK_COMPLETION' : 'TREATMENT_PROGRESS', status: 'PENDING',
+        patientId: patient, planId, recordId, hospitalId: hospital, sourceDocPath: sourcePath, canonicalHash: hash,
+        idempotencyKey: 'demo-original-key', attempts: 1, createdAt: '2026-01-01T00:00:00.000Z'
       });
-
-      const result = await worker.reconcilePendingTreatmentOperations();
-
-      expect(result.committed).to.equal(0);
-      expect(result.failed).to.equal(1);
+      const domainId = kind === 'note' ? recordId : (kind === 'task' ? 'task_' : 'tp_') + planId + '_' + recordId;
+      const key = PseudonymService.generateOpaqueRecordKey(patient, domainId);
+      proof = {
+        recordId: key, sha256Hash: hash, txId, version: 1, status: 'ACTIVE', timestamp: '2026-01-01T00:01:00.000Z',
+        metadata: { documentType: treatment ? 'TREATMENT_PLAN' : 'CLINICAL_NOTE' }
+      };
+      consent = {
+        status: 'GRANTED', active: true, scope: 'DIRECT_CARE', patientPseudoId: PseudonymService.generatePatientPseudoId(patient),
+        providerPseudoId: PseudonymService.generateProviderPseudoId(doctor), expirationTimestamp: null
+      };
+      fabric = {
+        submitTransaction: sinon.stub().throws(new Error('Real submission prohibited')), submitConsentTransaction: sinon.stub().throws(new Error('Prohibited')),
+        evaluateTransaction: sinon.stub().callsFake(async (name: string) => {
+          if (name === 'CheckConsent') return JSON.stringify(consent);
+          if (name === 'GetRecordProof') return JSON.stringify(proof);
+          if (name === 'VerifyRecordHash') return JSON.stringify({
+            verified: true, status: 'VERIFIED', txId,
+            recordId: key, ledgerHash: hash
+          });
+          throw new Error('Unexpected query');
+        })
+      };
+      worker = makeWorker();
+      sinon.stub(console, 'warn');
     });
-
-    it('should mark FAILED_RETRYABLE on transient Fabric error and FAILED_PERMANENT after 5 retries', async () => {
-      mockFabricGateway.evaluateTransaction
-        .withArgs('GetRecordProof')
-        .rejects(new Error('Record not found'));
-
-      mockFabricGateway.submitTransaction
-        .withArgs('AnchorRecordHash')
-        .rejects(new Error('DEADLINE_EXCEEDED: Peer timeout'));
-
-      const result1 = await worker.reconcilePendingTreatmentOperations();
-      expect(result1.failed).to.equal(1);
-      expect(result1.committed).to.equal(0);
-      expect(mockOpData.status).to.equal('FAILED_RETRYABLE');
-      expect(mockOpData.retryCount).to.equal(1);
-
-      // Simulate 4 prior retries (retryCount = 4) and eligible retry timestamp
-      mockOpData.retryCount = 4;
-      mockOpData.status = 'FAILED_RETRYABLE';
-      mockOpData.nextRetryAt = Date.now() - 1000;
-
-      const result2 = await worker.reconcilePendingTreatmentOperations();
-      expect(result2.failed).to.equal(1);
-      expect(mockOpData.status).to.equal('FAILED_PERMANENT');
-      expect(mockOpData.retryCount).to.equal(5);
+    afterEach(() => {
+      worker.stopPeriodicSweeper();
+      expect(fabric.submitTransaction.called).to.equal(false);
+      expect(fabric.submitConsentTransaction.called).to.equal(false);
+      sinon.restore();
     });
+    async function blocked() {
+      const before = copy(db.documents.get(queuedPath));
+      const result = await run();
+      expect(result.committed).to.equal(0); expect(db.updates).to.equal(0);
+      expect(db.documents.get(queuedPath)).to.deep.equal(before);
+    }
+    it('recovers matching proof by projection only, retaining original metadata', async () => {
+      const before = copy(db.documents.get(queuedPath));
+      const result = await run();
+      expect(result.committed).to.equal(1);
+      expect(db.documents.get(sourcePath).fabricTxId).to.equal(txId);
+      expect(db.documents.get(queuedPath).attempts).to.equal(before.attempts);
+      expect(db.documents.get(queuedPath).idempotencyKey).to.equal(before.idempotencyKey);
+      expect(db.documents.get(queuedPath).createdAt).to.equal(before.createdAt);
+      const updates = db.updates;
+      await run(); expect(db.updates).to.equal(updates);
+    });
+    for (const reason of ['Fabric unavailable', 'DEADLINE_EXCEEDED', 'Record does not exist on ledger', 'UNCERTAIN commit']) {
+      it('blocks ' + reason + ' without treating it as permission to submit', async () => {
+        fabric.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error(reason)); await blocked();
+      });
+    }
+    it('blocks a different hash rather than creating a ledger revision', async () => { proof.sha256Hash = 'c'.repeat(64); await blocked(); });
+    for (const status of ['REVOKED', 'NOT_FOUND', 'EXPIRED']) {
+      it('blocks consent ' + status, async () => { consent.status = status; consent.active = false; await blocked(); });
+    }
+    it('blocks a consent lookup outage without a Firestore fallback', async () => {
+      fabric.evaluateTransaction.withArgs('CheckConsent').rejects(new Error('Unavailable')); await blocked();
+    });
+    it('blocks a malformed or mismatched consent response', async () => { consent.providerPseudoId = 'wrong-provider'; await blocked(); });
+    it('blocks missing authoritative patient identity', async () => { db.documents.delete('users/' + patient); await blocked(); });
+    it('blocks missing authoritative doctor identity', async () => { db.documents.delete('doctors/' + doctor); await blocked(); });
+    it('blocks an unauthorized source author', async () => { db.documents.delete('users/' + (treatment ? nurse : doctor)); await blocked(); });
+    it('revalidates source identity and contents before projection', async () => {
+      db.beforeTransaction = () => patch(sourcePath, { patientId: 'different-patient' });
+      expect((await run()).committed).to.equal(0);
+      expect(db.updates).to.equal(0);
+      expect(db.documents.get(sourcePath).patientId).to.equal('different-patient');
+    });
+    it('does not take over a still-live processing lease', async () => {
+      patch(queuedPath, { [treatment ? 'status' : 'fabricStatus']: 'PROCESSING', lockExpiresAt: Date.now() + 60000 }); await blocked();
+    });
+    it('lease expiry permits only proof recovery, not resubmission', async () => {
+      patch(queuedPath, { [treatment ? 'status' : 'fabricStatus']: 'PROCESSING', lockExpiresAt: Date.now() - 1 });
+      fabric.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('Timeout')); await blocked();
+    });
+    it('restart preserves uncertainty until a matching committed proof is available', async () => {
+      patch(queuedPath, { [treatment ? 'status' : 'fabricStatus']: 'UNCERTAIN_RETRYABLE', txId });
+      fabric.evaluateTransaction.withArgs('GetRecordProof').onFirstCall().rejects(new Error('Unavailable'));
+      await blocked(); worker = makeWorker();
+      expect((await run()).committed).to.equal(1);
+      expect(db.documents.get(queuedPath).txId).to.equal(txId);
+    });
+    it('a different saved transaction cannot be replaced by an older proof', async () => {
+      patch(queuedPath, { txId: 'd'.repeat(64) }); await blocked();
+    });
+    it('concurrent workers project once and never submit', async () => {
+      const second = makeWorker();
+      const results = await Promise.all([run(), treatment ? second.reconcilePendingTreatmentOperations() : second.reconcilePendingClinicalNotes()]);
+      expect(results.reduce((n, r) => n + r.committed, 0)).to.equal(1);
+    });
+    it('empty queue does not query Fabric or write bookkeeping', async () => {
+      db.documents.delete(queuedPath); await run(); expect(fabric.evaluateTransaction.called).to.equal(false); expect(db.updates).to.equal(0);
+    });
+    it('never infers automatic submission approval from finalized or synthetic data', async () => {
+      patch(sourcePath, { synthetic: true, reviewedBy: doctor, approved: true });
+      fabric.evaluateTransaction.withArgs('GetRecordProof').rejects(new Error('Not found')); await blocked();
+    });
+    it('verification outage cannot turn an unverified receipt into a committed projection', async () => {
+      fabric.evaluateTransaction.withArgs('VerifyRecordHash').rejects(new Error('DEADLINE_EXCEEDED')); await blocked();
+    });
+    it('projection persistence failure retries only recovery after restart', async () => {
+      const before = copy(db.documents.get(queuedPath));
+      db.failWrites = () => true;
+      expect((await run()).committed).to.equal(0);
+      expect(db.documents.get(queuedPath)).to.deep.equal(before);
+      db.failWrites = () => false;
+      worker = makeWorker();
+      expect((await run()).committed).to.equal(1);
+    });
+    it('lease expiration during an in-flight lookup cannot start a Fabric submission', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let started!: () => void;
+      const entered = new Promise<void>(resolve => { started = resolve; });
+      fabric.evaluateTransaction.withArgs('GetRecordProof').callsFake(async () => {
+        started(); await gate; return JSON.stringify(proof);
+      });
+      const first = run(); await entered;
+      patch(queuedPath, { [treatment ? 'status' : 'fabricStatus']: 'PROCESSING', lockExpiresAt: Date.now() - 1 });
+      const other = makeWorker();
+      const second = treatment ? other.reconcilePendingTreatmentOperations() : other.reconcilePendingClinicalNotes();
+      release();
+      const results = await Promise.all([first, second]);
+      expect(results.reduce((n, r) => n + r.committed, 0)).to.equal(1);
+    });
+    it('a finalization timestamp must be valid', async () => {
+      patch(sourcePath, { [kind === 'note' ? 'createdAtIso' : kind === 'task' ? 'completedAt' : 'timestamp']: 'invalid-date' });
+      await blocked();
+    });
+    if (treatment) {
+      it('blocks arbitrary source paths', async () => { patch(queuedPath, { sourceDocPath: 'medical_records/unrelated' }); await blocked(); });
+      it('blocks unsupported record types', async () => { patch(queuedPath, { recordType: 'UNKNOWN' }); await blocked(); });
+      it('blocks a missing queued content fingerprint', async () => { delete db.documents.get(queuedPath).canonicalHash; await blocked(); });
+      it('blocks inactive treatment plans', async () => { patch('patients/' + patient + '/treatment_plans/' + planId, { status: 'discontinued' }); await blocked(); });
+      it('blocks revoked nursing assignments', async () => { patch('nurse_patient_assignments/' + nurse + '_' + patient, { status: 'revoked' }); await blocked(); });
+      it('blocks mismatched durable operation identity', async () => { patch(queuedPath, { operationId: 'different-operation' }); await blocked(); });
+      if (kind === 'task') it('blocks an incomplete task', async () => { patch(sourcePath, { status: 'pending' }); await blocked(); });
+    } else {
+      it('never processes a DRAFT note', async () => { patch(sourcePath, { status: 'DRAFT' }); await blocked(); });
+      it('requires a submitted note hash to match actual content', async () => { patch(sourcePath, { clinicalSummary: 'Changed after submission' }); await blocked(); });
+      it('does not treat administrator role as automatic clinical approval', async () => { patch('users/' + doctor, { role: 'admin' }); await blocked(); });
+    }
   });
-});
+}
