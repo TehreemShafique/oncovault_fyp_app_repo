@@ -28,9 +28,10 @@ env:
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
   # ═════════════════════════════════════════════════════════════════════════════
-  # 2. BACKEND API URL (Add this to GitHub Secrets once your Python backend is hosted)
+  # 2. BACKEND & BLOCKCHAIN GATEWAY CLOUD URLs (Configured in GitHub Secrets)
   # ═════════════════════════════════════════════════════════════════════════════
   API_BASE_URL: ${{ secrets.API_BASE_URL }}
+  FABRIC_GATEWAY_URL: ${{ secrets.FABRIC_GATEWAY_URL }}
 
 jobs:
   build-and-deploy:
@@ -55,14 +56,17 @@ jobs:
 
       - name: Build Flutter Web (Release)
         run: |
-          # If API_BASE_URL secret is provided, inject it at compile time for full backend integration
+          BUILD_ARGS=""
           if [ -n "${{ env.API_BASE_URL }}" ]; then
-            echo "Building with remote backend URL: ${{ env.API_BASE_URL }}"
-            flutter build web --release --dart-define=API_BASE_URL="${{ env.API_BASE_URL }}"
-          else
-            echo "Building with default local fallback"
-            flutter build web --release
+            echo "Injecting backend URL: ${{ env.API_BASE_URL }}"
+            BUILD_ARGS="$BUILD_ARGS --dart-define=API_BASE_URL=${{ env.API_BASE_URL }}"
           fi
+          if [ -n "${{ env.FABRIC_GATEWAY_URL }}" ]; then
+            echo "Injecting blockchain gateway URL: ${{ env.FABRIC_GATEWAY_URL }}"
+            BUILD_ARGS="$BUILD_ARGS --dart-define=FABRIC_GATEWAY_URL=${{ env.FABRIC_GATEWAY_URL }}"
+          fi
+          echo "Building Flutter Web with flags: $BUILD_ARGS"
+          flutter build web --release $BUILD_ARGS
 
       - name: Copy vercel.json into Web Build directory
         run: |

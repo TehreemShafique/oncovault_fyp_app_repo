@@ -214,6 +214,11 @@ class FabricGatewayService {
     if (_customBaseUrl != null && _customBaseUrl!.trim().isNotEmpty) {
       return _customBaseUrl!.trim().replaceAll(RegExp(r'/+$'), '');
     }
+    const String envUrl =
+        String.fromEnvironment('FABRIC_GATEWAY_URL', defaultValue: '');
+    if (envUrl.isNotEmpty) {
+      return envUrl.endsWith('/') ? envUrl.substring(0, envUrl.length - 1) : envUrl;
+    }
     const int gatewayPort =
         int.fromEnvironment('FABRIC_GATEWAY_PORT', defaultValue: 5001);
     if (!kIsWeb && Platform.isAndroid) {
