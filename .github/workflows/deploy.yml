@@ -1,0 +1,86 @@
+name: Deploy to Vercel
+
+# Automated deployment of OncoVault Web to Vercel.
+# Builds the Flutter Web application in release mode and deploys the static
+# artifacts to Vercel so the application can be accessed directly via URL.
+
+on:
+  push:
+    branches:
+      - main
+      - 60percent
+      - dev
+      - feature/ci-cd-pipeline
+  # Allows triggering the deployment manually with 1-click from the GitHub Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vercel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ═════════════════════════════════════════════════════════════════════════════
+  # 1. REQUIRED VERCEL SECRETS (Set these in GitHub Repo -> Settings -> Secrets)
+  # ═════════════════════════════════════════════════════════════════════════════
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # 2. BACKEND API URL (Add this to GitHub Secrets once your Python backend is hosted)
+  # ═════════════════════════════════════════════════════════════════════════════
+  API_BASE_URL: ${{ secrets.API_BASE_URL }}
+
+jobs:
+  build-and-deploy:
+    name: Build Flutter Web & Deploy to Vercel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Flutter Web
+        run: flutter config --enable-web
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter Web (Release)
+        run: |
+          # If API_BASE_URL secret is provided, inject it at compile time for full backend integration
+          if [ -n "${{ env.API_BASE_URL }}" ]; then
+            echo "Building with remote backend URL: ${{ env.API_BASE_URL }}"
+            flutter build web --release --dart-define=API_BASE_URL="${{ env.API_BASE_URL }}"
+          else
+            echo "Building with default local fallback"
+            flutter build web --release
+          fi
+
+      - name: Copy vercel.json into Web Build directory
+        run: |
+          # Ensures single-page app (SPA) rewrites are respected by Vercel
+          cp vercel.json build/web/vercel.json || true
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        id: vercel-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./build/web
+
+      - name: Summary & Live Link Output
+        run: |
+          echo "=========================================================="
+          echo "🎉 Successfully deployed OncoVault Web to Vercel!"
+          echo "🌐 Live Production URL: ${{ steps.vercel-deploy.outputs.preview-url }}"
+          echo "=========================================================="

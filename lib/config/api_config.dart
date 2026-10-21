@@ -21,6 +21,12 @@ class ApiConfig {
       return _customBaseUrl!;
     }
 
+    // Support compile-time environment variable for deployed cloud backend
+    const String envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    if (envUrl.isNotEmpty) {
+      return envUrl.endsWith('/') ? envUrl.substring(0, envUrl.length - 1) : envUrl;
+    }
+
     if (kIsWeb) {
       return 'http://127.0.0.1:8000';
     }

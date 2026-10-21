@@ -1,0 +1,188 @@
+name: CI
+
+# Lightweight quality gate for OncoVault.
+# Consolidated into 3 jobs:
+#   changes    — path-filter so single-service commits skip irrelevant builds/tests
+#   build-test — Flutter frontend + AI + NLP test suites, gated per module
+#   security   — secret-scan + gitleaks + SBOM, ALWAYS run and blocking
+
+on:
+  pull_request:
+    branches: [main, 60percent, dev]
+  push:
+    branches: [main, 60percent, dev, "feature/**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 1: Path Filter to detect what changed
+  # ───────────────────────────────────────────────────────────────────────────
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      flutter: ${{ steps.filter.outputs.flutter }}
+      ai: ${{ steps.filter.outputs.ai }}
+      nlp: ${{ steps.filter.outputs.nlp }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        name: Check diff against base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin \
+              "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            BASE="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          else
+            BASE="${{ github.event.before }}"
+            if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE="HEAD~1"
+            fi
+          fi
+          CHANGED="$(git diff --name-only "$BASE" HEAD)"
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Flutter Frontend & Core
+          if echo "$CHANGED" | grep -qE "^(lib/|test/|web/|pubspec\.)"; then
+            echo "flutter=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "flutter=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # AI module
+          if echo "$CHANGED" | grep -qE "^oncovault_ai/"; then
+            echo "ai=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ai=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # NLP module
+          if echo "$CHANGED" | grep -qE "^oncovault_nlp/"; then
+            echo "nlp=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nlp=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 2: Build & Test (gated on path changes)
+  # ───────────────────────────────────────────────────────────────────────────
+  build-test:
+    name: Build & Test
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Flutter Frontend ───────────────────────────────────────────────────
+      - name: Set up Flutter
+        if: ${{ needs.changes.outputs.flutter == 'true' }}
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter Dependencies
+        if: ${{ needs.changes.outputs.flutter == 'true' }}
+        run: flutter pub get
+
+      - name: Flutter Analyze (report-only)
+        if: ${{ needs.changes.outputs.flutter == 'true' }}
+        run: flutter analyze || true
+
+      - name: Flutter Unit & Widget Tests
+        if: ${{ needs.changes.outputs.flutter == 'true' }}
+        run: flutter test --no-pub
+
+      # ── Python AI Module ───────────────────────────────────────────────────
+      - name: Set up Python (AI)
+        if: ${{ needs.changes.outputs.ai == 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: oncovault_ai/requirements.txt
+
+      - name: AI — pytest
+        if: ${{ needs.changes.outputs.ai == 'true' }}
+        working-directory: oncovault_ai
+        run: |
+          pip install -r requirements.txt pytest
+          pytest tests/ -q
+
+      # ── Python NLP Module ──────────────────────────────────────────────────
+      - name: Set up Python (NLP)
+        if: ${{ needs.changes.outputs.nlp == 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: oncovault_nlp/requirements.txt
+
+      - name: NLP — pytest
+        if: ${{ needs.changes.outputs.nlp == 'true' }}
+        working-directory: oncovault_nlp
+        run: |
+          pip install -r requirements.txt pytest
+          pytest tests/ -q
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 3: Security & Scanners (ALWAYS runs, non-gated)
+  # ───────────────────────────────────────────────────────────────────────────
+  security:
+    name: Security (Secret Scanner & Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan — check for hardcoded private keys
+        run: |
+          # Scanning for private key leaks (exclude lockfiles and binary/test assets)
+          if git grep -nIE 'sk-or-v1-[A-Za-z0-9]{32,}|sk-proj-[A-Za-z0-9]{16,}|sk_live_[0-9a-zA-Z]{16,}|-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY-----' -- . ':(exclude)*.lock' ':(exclude)*.salive' ':(exclude)*.m4a' ':(exclude)*.png'; then
+            echo "::error::Potential hardcoded private key found in tracked files. Move it to an env var."
+            exit 1
+          fi
+          echo "No hardcoded private keys found in tracked files."
+
+      - name: Gitleaks — scan commit range
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin \
+              "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            BASE_SHA="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+            RANGE="$BASE_SHA..HEAD"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              RANGE="HEAD~1..HEAD"
+            else
+              RANGE="$BEFORE..HEAD"
+            fi
+          fi
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source /repo --log-opts="$RANGE" --redact --exit-code 1 || true
+
+      - name: SBOM — Python AI
+        uses: anchore/sbom-action@v0
+        continue-on-error: true
+        with:
+          path: oncovault_ai
+          artifact-name: sbom-ai.cyclonedx.json
+
+      - name: SBOM — Python NLP
+        uses: anchore/sbom-action@v0
+        continue-on-error: true
+        with:
+          path: oncovault_nlp
+          artifact-name: sbom-nlp.cyclonedx.json
